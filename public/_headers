@@ -1,0 +1,6 @@
+# Cô lập trang để ONNX Runtime dùng được SharedArrayBuffer, chạy xoá vật thể AI nhiều luồng.
+# "credentialless" vẫn cho tải model từ Hugging Face qua CORS. Safari chưa hỗ trợ giá trị này
+# nên bỏ qua header và chạy một luồng như trước.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless

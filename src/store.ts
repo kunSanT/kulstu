@@ -45,9 +45,11 @@ type State = {
   /** Cỡ cọ làm mịn, 1–100. */
   smoothSize: number
   /** Công cụ đang chọn trong tab Xoá. */
-  healTool: 'spot' | 'object' | 'repair' | 'blur'
+  healTool: 'spot' | 'object' | 'blur'
   repairStrokes: RepairStroke[]
   repairing: boolean
+  /** Tiến độ AI: phần trăm tải model (0–100), hoặc 'running' khi đang chạy. */
+  repairProgress: number | 'running' | null
   /** Cỡ cọ xoá vật thể, 1–100. */
   eraseSize: number
   /** Cỡ cọ kéo nắn, 1–100. */
@@ -81,6 +83,7 @@ let state: State = {
   healTool: 'spot',
   repairStrokes: [],
   repairing: false,
+  repairProgress: null,
   eraseSize: 40,
   pushSize: 45,
   body: { status: 'idle', data: null },
@@ -420,7 +423,7 @@ export async function runRepair() {
     toast('Đã đạt 12 lần xử lý AI cho ảnh này.', { err: true })
     return
   }
-  set({ repairing: true })
+  set({ repairing: true, repairProgress: null })
   try {
     const canvas = document.createElement('canvas')
     canvas.width = src.preview.width
@@ -429,7 +432,9 @@ export async function runRepair() {
     applySpots(canvas, recipe.spots)
     applyErases(canvas, recipe.erase)
     await drawRepairs(canvas, recipe.repairs)
-    const patch = await repairRegion(canvas, repairStrokes)
+    const patch = await repairRegion(canvas, repairStrokes, (p) => set({
+      repairProgress: p.phase === 'running' ? 'running' : p.total ? Math.min(100, Math.round(p.loaded / p.total * 100)) : null,
+    }))
     if (state.src !== src || state.repairStrokes !== repairStrokes) return
     if (state.recipe.repairs !== recipe.repairs || state.recipe.spots !== recipe.spots || state.recipe.erase !== recipe.erase) {
       toast('Ảnh đã thay đổi trong lúc AI chạy. Hãy xử lý lại vùng đã tô.', { err: true })
@@ -440,7 +445,7 @@ export async function runRepair() {
   } catch (error) {
     if (state.src === src) toast(error instanceof Error ? error.message : 'AI chưa xử lý được. Hãy thử lại.', { err: true })
   } finally {
-    set({ repairing: false })
+    set({ repairing: false, repairProgress: null })
   }
 }
 

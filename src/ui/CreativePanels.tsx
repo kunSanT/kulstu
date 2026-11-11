@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Decoration, Recipe } from '../engine/recipe'
-import { applyColorMatch, matchColors } from '../engine/colorMatch'
-import { decodeFile, releaseSource, type Source } from '../services/image'
+import { COLLAGE_MAX, COLLAGE_MIN, collageDividers, collageSlots, drawCollage, keyTarget, resizePair, type CollagePhoto, type Layout } from '../engine/collage'
+import { decodeFile, releaseSource } from '../services/image'
 import { change, chooseBackground, commit, ensureCutout, ensureHair, live, selectDecoration, useStore } from '../store'
 import { Band } from './Band'
 
@@ -94,89 +94,55 @@ export function CreatePanel() {
   )
 }
 
-type Layout = 'row' | 'column' | 'grid'
-type CollagePhoto = Pick<Source, 'id' | 'name' | 'preview'>
 const layouts: { id: Layout; label: string }[] = [
   { id: 'row', label: 'Ngang' }, { id: 'column', label: 'Dọc' }, { id: 'grid', label: 'Lưới' },
 ]
 
-const collageColumns = (count: number, layout: Layout) =>
-  layout === 'row' ? count : layout === 'grid' ? Math.ceil(Math.sqrt(count)) : 1
-
-function collageSlots(length: number, layout: Layout) {
-  const columns = collageColumns(length, layout)
-  const rows = Math.ceil(length / columns)
-  const gap = .014
-  const height = (1 - gap * (rows + 1)) / rows
-  return Array.from({ length }, (_, i) => {
-    const row = Math.floor(i / columns)
-    const count = Math.min(columns, length - row * columns)
-    const width = (1 - gap * (count + 1)) / count
-    return { x: gap + (i % columns) * (width + gap), y: gap + row * (height + gap), width, height }
-  })
-}
-
-function drawCollage(canvas: HTMLCanvasElement, photos: CollagePhoto[], layout: Layout, side: number, background: string, referenceId: number | null) {
-  canvas.width = canvas.height = side
-  const g = canvas.getContext('2d')!
-  g.fillStyle = background
-  g.fillRect(0, 0, side, side)
-  const slots = collageSlots(photos.length, layout)
-  const reference = photos.find((photo) => photo.id === referenceId)
-  photos.forEach((photo, i) => {
-    const { x, y, width, height } = slots[i]
-    const w = width * side
-    const h = height * side
-    const image = photo.preview
-    const scale = Math.max(w / image.width, h / image.height)
-    const sw = w / scale
-    const sh = h / scale
-    g.drawImage(image, (image.width - sw) / 2, (image.height - sh) / 2, sw, sh,
-      x * side, y * side, w, h)
-    if (!reference || reference === photo) return
-    const match = matchColors(image, reference.preview)
-    if (!match) return
-    const left = Math.ceil(x * side), top = Math.ceil(y * side)
-    const pixels = g.getImageData(left, top, Math.floor(x * side + w) - left, Math.floor(y * side + h) - top)
-    applyColorMatch(pixels, match)
-    g.putImageData(pixels, left, top)
-  })
-}
+const same = (count: number) => Array.from({ length: count }, () => 1)
 
 export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogElement | null> }) {
   const [photos, setPhotos] = useState<CollagePhoto[]>([])
+  const [weights, setWeights] = useState<number[]>([])
   const [layout, setLayout] = useState<Layout>('grid')
   const [color, setColor] = useState('#ffffff')
   const [referenceId, setReferenceId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [dragging, setDragging] = useState<{ from: number; over: number } | null>(null)
+  const [resizing, setResizing] = useState<number | null>(null)
   const pointer = useRef<number | null>(null)
+  const resize = useRef<{ id: number; a: number; start: number; size: number; weights: number[] } | null>(null)
   const generation = useRef(0)
   const preview = useRef<HTMLCanvasElement>(null)
+  const frame = useRef<HTMLDivElement>(null)
   useEffect(() => () => { generation.current++ }, [])
   useEffect(() => {
-    if (photos.length && preview.current) drawCollage(preview.current, photos, layout, 440, color, referenceId)
-  }, [photos, layout, color, referenceId])
+    if (photos.length && preview.current) drawCollage(preview.current, photos, layout, 440, color, referenceId, weights)
+  }, [photos, layout, color, referenceId, weights])
+
+  const room = COLLAGE_MAX - photos.length
 
   async function load(files: File[]) {
-    if (files.length < 2 || files.length > 9) {
-      setError('Hãy chọn từ 2 đến 9 ảnh cùng lúc.')
+    if (!files.length) return
+    if (files.length > room) {
+      setError(room ? `Chỉ thêm được ${room} ảnh nữa (tối đa ${COLLAGE_MAX} ảnh).` : `Đã đủ ${COLLAGE_MAX} ảnh. Xoá bớt ảnh để thêm ảnh khác.`)
       return
     }
     const request = ++generation.current
     setBusy(true)
     setError('')
-    const next: CollagePhoto[] = []
+    const added: CollagePhoto[] = []
     try {
       for (const file of files) {
-        const src = await decodeFile(file, file.name, 1600)
+        const src = await decodeFile(file, file.name, 1600).catch((e: unknown) => {
+          throw new Error(`${file.name}: ${e instanceof Error ? e.message : 'không mở được ảnh.'}`)
+        })
         releaseSource(src)
-        next.push({ id: src.id, name: src.name, preview: src.preview })
+        added.push({ id: src.id, name: src.name, preview: src.preview })
         if (request !== generation.current) return
       }
-      setPhotos(next)
-      setReferenceId(null)
+      setPhotos((current) => [...current, ...added])
+      setWeights((current) => [...current, ...same(added.length)])
     } catch (e) {
       if (request === generation.current) setError(e instanceof Error ? e.message : 'Không mở được ảnh đã chọn.')
     } finally {
@@ -184,6 +150,20 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
     }
   }
 
+  const remove = (index: number) => {
+    const removed = photos[index]
+    setPhotos((current) => current.filter((_, i) => i !== index))
+    setWeights((current) => current.filter((_, i) => i !== index))
+    if (removed && removed.id === referenceId) setReferenceId(null)
+    setError('')
+  }
+
+  const chooseLayout = (next: Layout) => {
+    setLayout(next)
+    setWeights(same(photos.length))
+  }
+
+  // đổi chỗ ảnh, độ rộng giữ theo vị trí ô
   const swap = (from: number, to: number) => {
     if (to < 0 || to >= photos.length || from === to) return
     setPhotos((current) => {
@@ -204,10 +184,18 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
     setDragging(null)
   }
 
+  const endResize = (event: React.PointerEvent<HTMLElement>) => {
+    if (resize.current?.id !== event.pointerId) return
+    resize.current = null
+    setResizing(null)
+  }
+
   const close = () => {
     generation.current++
     pointer.current = null
+    resize.current = null
     setDragging(null)
+    setResizing(null)
     setBusy(false)
     dialog.current?.close()
   }
@@ -218,7 +206,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
     setError('')
     try {
       const canvas = document.createElement('canvas')
-      drawCollage(canvas, photos, layout, 1600, color, referenceId)
+      drawCollage(canvas, photos, layout, 1600, color, referenceId, weights)
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
       if (request !== generation.current) return
       if (!blob) throw new Error('encode')
@@ -226,7 +214,9 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
       const link = document.createElement('a')
       link.href = url
       link.download = 'kulstu-ghep-anh.png'
+      document.body.append(link)
       link.click()
+      link.remove()
       setTimeout(() => URL.revokeObjectURL(url), 5000)
     } catch {
       if (request === generation.current) setError('Chưa tải được ảnh ghép. Hãy thử lại.')
@@ -234,6 +224,9 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
       if (request === generation.current) setBusy(false)
     }
   }
+
+  const slots = collageSlots(photos.length, layout, weights)
+  const dividers = collageDividers(photos.length, layout, weights)
 
   return <dialog ref={dialog} aria-labelledby="collage-title" className="collage-dialog"
     onCancel={(e) => { e.preventDefault(); close() }}
@@ -256,8 +249,9 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
         </svg>
       </button>
     </header>
-    <label className="collage-files">Chọn 2–9 ảnh
-      <input type="file" accept="image/*" multiple disabled={busy} onChange={(e) => {
+    <label className="collage-files">
+      {photos.length ? `Thêm ảnh (${photos.length}/${COLLAGE_MAX})` : `Chọn ${COLLAGE_MIN}–${COLLAGE_MAX} ảnh`}
+      <input type="file" accept="image/*" multiple disabled={busy || !room} onChange={(e) => {
         const files = Array.from(e.currentTarget.files ?? [])
         e.currentTarget.value = ''
         void load(files)
@@ -265,7 +259,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
     </label>
     <div className="chips" role="group" aria-label="Bố cục ghép">
       {layouts.map((option) => <button key={option.id} type="button" className="chip" aria-pressed={layout === option.id}
-        disabled={busy} onClick={() => setLayout(option.id)}>{option.label}</button>)}
+        disabled={busy} onClick={() => chooseLayout(option.id)}>{option.label}</button>)}
       <input type="color" aria-label="Màu viền ảnh ghép" value={color} disabled={busy} onChange={(e) => setColor(e.currentTarget.value)} />
     </div>
     {!!photos.length && <>
@@ -276,15 +270,15 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
           {photos.map((photo, i) => <option key={photo.id} value={photo.id}>Theo ảnh {i + 1}</option>)}
         </select>
       </label>
-      <div className="collage-preview">
+      <div className="collage-preview" ref={frame}>
         <canvas ref={preview} aria-label="Xem trước ảnh ghép" />
-        {collageSlots(photos.length, layout).map((slot, i) => (
+        {slots.map((slot, i) => (
           <button key={photos[i].id} type="button" className="collage-slot" data-collage-slot={i}
             data-dragging={dragging?.from === i} data-target={dragging?.over === i && dragging.from !== i}
             style={{ left: `${slot.x * 100}%`, top: `${slot.y * 100}%`, width: `${slot.width * 100}%`, height: `${slot.height * 100}%` }}
-            aria-label={`Ảnh ${i + 1}: ${photos[i].name}. Kéo hoặc dùng phím mũi tên để đổi chỗ.`} disabled={busy}
+            aria-label={`Ảnh ${i + 1}: ${photos[i].name}. Kéo hoặc dùng phím mũi tên để đổi chỗ, phím Delete để xoá.`} disabled={busy}
             onPointerDown={(e) => {
-              if (e.button !== 0 || pointer.current !== null) return
+              if (e.button !== 0 || pointer.current !== null || resize.current) return
               e.currentTarget.setPointerCapture(e.pointerId)
               pointer.current = e.pointerId
               setDragging({ from: i, over: i })
@@ -302,21 +296,72 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
             onPointerCancel={endDrag}
             onLostPointerCapture={endDrag}
             onKeyDown={(e) => {
-              const columns = collageColumns(photos.length, layout)
-              const offset = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns } as Record<string, number>)[e.key]
-              if (!offset) return
+              if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault()
+                remove(i)
+                return
+              }
+              if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return
               e.preventDefault()
-              swap(i, i + offset)
+              swap(i, keyTarget(i, e.key, photos.length, layout))
             }}
           />
         ))}
+        {dividers.map((divider) => {
+          const vertical = divider.axis === 'x'
+          const nudge = (delta: number) => setWeights((current) => resizePair(current, photos.length, layout, divider.a, delta))
+          return <div key={`${divider.a}-${layout}`} className="collage-divider" role="separator" tabIndex={busy ? -1 : 0}
+            aria-orientation={vertical ? 'vertical' : 'horizontal'}
+            aria-label={`Đổi ${vertical ? 'độ rộng' : 'chiều cao'} ảnh ${divider.a + 1} và ${divider.b + 1}`}
+            aria-valuemin={0} aria-valuemax={100}
+            aria-valuenow={Math.round(weights[divider.a] / ((weights[divider.a] + weights[divider.b]) || 1) * 100)}
+            data-axis={divider.axis} data-active={resizing === divider.a}
+            style={vertical
+              ? { left: `${divider.x * 100}%`, top: `${divider.y * 100}%`, height: `${divider.length * 100}%` }
+              : { left: `${divider.x * 100}%`, top: `${divider.y * 100}%`, width: `${divider.length * 100}%` }}
+            onPointerDown={(e) => {
+              if (busy || e.button !== 0 || resize.current || pointer.current !== null || !frame.current) return
+              e.preventDefault()
+              e.currentTarget.setPointerCapture(e.pointerId)
+              const box = frame.current.getBoundingClientRect()
+              resize.current = { id: e.pointerId, a: divider.a, start: vertical ? e.clientX : e.clientY, size: vertical ? box.width : box.height, weights }
+              setResizing(divider.a)
+            }}
+            onPointerMove={(e) => {
+              const active = resize.current
+              if (!active || active.id !== e.pointerId || !active.size) return
+              const delta = ((vertical ? e.clientX : e.clientY) - active.start) / active.size
+              setWeights(resizePair(active.weights, photos.length, layout, active.a, delta))
+            }}
+            onPointerUp={endResize}
+            onPointerCancel={endResize}
+            onLostPointerCapture={endResize}
+            onKeyDown={(e) => {
+              const step = e.shiftKey ? .1 : .02
+              const delta = ({ ArrowLeft: -step, ArrowUp: -step, ArrowRight: step, ArrowDown: step } as Record<string, number>)[e.key]
+              if (!delta) return
+              e.preventDefault()
+              nudge(delta)
+            }} />
+        })}
+        {slots.map((slot, i) => (
+          <button key={`remove-${photos[i].id}`} type="button" className="collage-remove" disabled={busy}
+            style={{ left: `${(slot.x + slot.width) * 100}%`, top: `${slot.y * 100}%` }}
+            aria-label={`Xoá ảnh ${i + 1}: ${photos[i].name}`} title="Xoá ảnh này" onClick={() => remove(i)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+              <path d="m6 6 12 12M18 6 6 18" />
+            </svg>
+          </button>
+        ))}
       </div>
-      <p className="note">Kéo một ảnh lên ảnh khác để đổi chỗ.</p>
+      <p className="note">
+        {photos.length < COLLAGE_MIN ? `Thêm ít nhất ${COLLAGE_MIN - photos.length} ảnh nữa để ghép.` : 'Kéo ảnh lên ảnh khác để đổi chỗ. Kéo vạch giữa hai ảnh để đổi độ rộng. Bấm × để xoá ảnh.'}
+      </p>
     </>}
     {error && <p className="note" role="alert">{error}</p>}
     <div className="dlg-actions">
       <button type="button" className="ghost" onClick={close}>Đóng</button>
-      <button type="button" className="primary" disabled={busy || photos.length < 2} onClick={() => void download()}>
+      <button type="button" className="primary" disabled={busy || photos.length < COLLAGE_MIN} onClick={() => void download()}>
         {busy ? 'Đang xử lý…' : 'Tải ảnh ghép'}
       </button>
     </div>

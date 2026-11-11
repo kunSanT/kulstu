@@ -10,7 +10,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:pages": "npm run assets && tsc -b && vite build --mode pages --outDir dist-pages && node scripts/prepare-pages.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --import ./test/setup.mjs --test \"test/*.test.ts\"",
+    "test:model": "node --import ./test/setup.mjs --test \"test/model/*.test.ts\""
   },
   "dependencies": {
     "@fontsource-variable/archivo": "^5.0.0",
@@ -26,5 +28,8 @@
     "@vitejs/plugin-react": "^6.1.2",
     "typescript": "~7.0.2",
     "vite": "^8.3.6"
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }
