@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { freshRecipe, outputSize, type PresetId } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
 import { exportImage, type ExportFormat } from '../services/image'
+import { detectPlatform, isPhone } from '../services/save'
 import { listDrafts, type DraftSummary } from '../services/draft'
 import {
   boot, change, dismissToast, flushDraft, getState, openFile, openProject, openSample, redo, removeDraft, runExport, setTab, undo, useStore, type Tab,
@@ -51,6 +52,10 @@ function pickFile() {
   document.body.append(input)
   input.click()
 }
+
+/** Điện thoại lưu vào thư viện ảnh, máy tính tải tệp xuống. */
+const platform = detectPlatform()
+const saveLabel = isPhone(platform) ? 'Lưu vào thư viện ảnh' : 'Tải ảnh xuống'
 
 export function App() {
   const src = useStore((s) => s.src)
@@ -462,6 +467,7 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
         <input type="range" aria-label="Chất lượng JPEG" min={30} max={100} value={quality} disabled={exporting}
           onChange={(event) => setQuality(Number(event.currentTarget.value))} />
       </label>}
+      {platform === 'ios' && <p className="note">Bảng chia sẻ sẽ mở ra, chọn “Lưu hình ảnh” để đưa ảnh vào app Ảnh.</p>}
       <div className="dlg-actions">
         <span className="grow" />
         <button type="button" className="ghost" disabled={exporting} onClick={close}>Huỷ</button>
@@ -473,7 +479,7 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
             if (await runExport(fmt, size.k, quality / 100)) close()
           }}
         >
-          {exporting ? 'Đang xuất…' : 'Tải ảnh xuống'}
+          {exporting ? 'Đang xuất…' : saveLabel}
         </button>
       </div>
     </dialog>

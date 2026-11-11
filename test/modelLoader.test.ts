@@ -43,6 +43,27 @@ beforeEach(() => {
 })
 afterEach(() => { globalThis.fetch = realFetch; delete g.caches })
 
+/** Máy chủ giả nhiều tệp: đường dẫn → nội dung; thiếu tệp thì trả index.html như Workers bật SPA. */
+function site(files: Record<string, Uint8Array | string>) {
+  globalThis.fetch = (async (url: string) => {
+    calls.push(String(url))
+    const path = new URL(String(url), 'https://kulstu.test/').pathname
+    const body = files[path]
+    if (body === undefined) return new Response(html as Uint8Array<ArrayBuffer>, { status: 200, headers: { 'content-type': 'text/html' } })
+    const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body
+    return new Response(bytes as Uint8Array<ArrayBuffer>, { headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.length) } })
+  }) as typeof fetch
+}
+const split = (bytes: Uint8Array, size: number) => {
+  const parts: Record<string, Uint8Array> = {}
+  const list: { file: string; bytes: number }[] = []
+  for (let i = 0, k = 0; i < bytes.length; i += size, k++) {
+    parts[`/models/lama/part${k}.bin`] = bytes.slice(i, i + size)
+    list.push({ file: `part${k}.bin`, bytes: Math.min(size, bytes.length - i) })
+  }
+  return { parts, manifest: (extra: object = {}) => JSON.stringify({ bytes: bytes.length, sha256: sha, parts: list, ...extra }) }
+}
+
 const code = async (promise: Promise<unknown>) => {
   try {
     await promise
@@ -110,5 +131,67 @@ describe('loadModel', () => {
     delete g.caches
     serve(model)
     assert.equal((await loadModel({ url: '/g', sha256: sha })).length, model.length)
+  })
+
+  describe('model chia phần (manifest.json)', () => {
+    test('tải đủ các phần theo thứ tự, ghép đúng, tiến độ tính trên tổng số byte', async () => {
+      const { parts, manifest } = split(model, 3)
+      site({ '/models/lama/manifest.json': manifest(), ...parts })
+      const progress: [number, number][] = []
+      const bytes = await loadModel({ url: '/models/lama/manifest.json' }, (a, b) => progress.push([a, b]))
+      assert.deepEqual([...bytes], [...model])
+      assert.deepEqual(calls.slice(1).map((u) => u.split('/').pop()), ['part0.bin', 'part1.bin', 'part2.bin', 'part3.bin'])
+      assert.ok(progress.every(([, total]) => total === model.length))
+      assert.ok(progress.every(([a], i) => !i || a >= progress[i - 1][0]))
+      assert.deepEqual(progress.at(-1), [model.length, model.length])
+    })
+
+    test('thiếu một phần (máy chủ trả index.html) → missing', async () => {
+      const { parts, manifest } = split(model, 4)
+      delete parts['/models/lama/part1.bin']
+      site({ '/models/lama/manifest.json': manifest(), ...parts })
+      assert.equal(await code(loadModel({ url: '/models/lama/manifest.json' })), 'missing')
+    })
+
+    test('chưa deploy manifest (trả HTML) → missing', async () => {
+      site({})
+      assert.equal(await code(loadModel({ url: '/models/lama/manifest.json' })), 'missing')
+    })
+
+    test('một phần bị hỏng → corrupt nhờ SHA-256 trong manifest', async () => {
+      const { parts, manifest } = split(model, 4)
+      parts['/models/lama/part1.bin'] = new Uint8Array([0, 0, 0, 0])
+      site({ '/models/lama/manifest.json': manifest(), ...parts })
+      assert.equal(await code(loadModel({ url: '/models/lama/manifest.json' })), 'corrupt')
+    })
+
+    test('manifest sai tổng số byte → corrupt', async () => {
+      const { parts, manifest } = split(model, 4)
+      site({ '/models/lama/manifest.json': manifest({ bytes: 99 }), ...parts })
+      assert.equal(await code(loadModel({ url: '/models/lama/manifest.json' })), 'corrupt')
+    })
+
+    test('lần sau lấy nguyên model từ cache, không tải lại phần nào', async () => {
+      const { parts, manifest } = split(model, 4)
+      site({ '/models/lama/manifest.json': manifest(), ...parts })
+      await loadModel({ url: '/models/lama/manifest.json' })
+      const first = calls.length
+      await loadModel({ url: '/models/lama/manifest.json' })
+      assert.equal(calls.length, first)
+    })
+  })
+
+  test('manifest thật trong public/models/lama khớp model và mỗi phần dưới 25 MiB', async () => {
+    const { readFileSync } = await import('node:fs')
+    const m = JSON.parse(readFileSync(new URL('../public/models/lama/manifest.json', import.meta.url), 'utf8'))
+    const { LAMA_BYTES, LAMA_SHA256 } = await import('../src/engine/lama.ts')
+    assert.equal(m.bytes, LAMA_BYTES)
+    assert.equal(m.sha256, LAMA_SHA256)
+    for (const part of m.parts) {
+      assert.ok(part.bytes < 25 * 1024 * 1024, `${part.file} vượt 25 MiB`)
+      const bytes = readFileSync(new URL(`../public/models/lama/${part.file}`, import.meta.url))
+      assert.equal(bytes.length, part.bytes)
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), part.sha256)
+    }
   })
 })

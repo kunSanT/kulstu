@@ -3,8 +3,8 @@ import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 
-// Model xoá vật thể (88 MiB) chỉ dùng khi chạy dev; bản build tải từ VITE_REPAIR_MODEL_URL hoặc Hugging Face.
-// Bỏ nó khỏi thư mục build vì Cloudflare Workers/Pages giới hạn 25 MiB mỗi tệp.
+// Bản nguyên khối của model xoá vật thể (88 MiB) không được đưa vào build vì Cloudflare giới hạn 25 MiB mỗi tệp;
+// app dùng bản chia phần trong public/models/lama (scripts/split-model.mjs).
 const dropLocalModel = (): Plugin => {
   let outDir = 'dist'
   return {

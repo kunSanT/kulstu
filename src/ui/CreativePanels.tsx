@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { Decoration, Recipe } from '../engine/recipe'
 import { COLLAGE_MAX, COLLAGE_MIN, collageDividers, collageSlots, drawCollage, keyTarget, resizePair, type CollagePhoto, type Layout } from '../engine/collage'
 import { decodeFile, releaseSource } from '../services/image'
-import { change, chooseBackground, commit, ensureCutout, ensureHair, live, selectDecoration, useStore } from '../store'
+import { detectPlatform, isPhone } from '../services/save'
+import { change, chooseBackground, commit, deliverImage, ensureCutout, ensureHair, live, selectDecoration, useStore } from '../store'
 import { Band } from './Band'
 
 const colors = ['#ffffff', '#eadcc9', '#d9e7f3', '#233448'] as const
@@ -97,6 +98,8 @@ export function CreatePanel() {
 const layouts: { id: Layout; label: string }[] = [
   { id: 'row', label: 'Ngang' }, { id: 'column', label: 'Dọc' }, { id: 'grid', label: 'Lưới' },
 ]
+
+const collageSaveLabel = isPhone(detectPlatform()) ? 'Lưu ảnh ghép vào thư viện' : 'Tải ảnh ghép'
 
 const same = (count: number) => Array.from({ length: count }, () => 1)
 
@@ -210,14 +213,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
       if (request !== generation.current) return
       if (!blob) throw new Error('encode')
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = 'kulstu-ghep-anh.png'
-      document.body.append(link)
-      link.click()
-      link.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 5000)
+      await deliverImage(blob, 'kulstu-ghep-anh.png')
     } catch {
       if (request === generation.current) setError('Chưa tải được ảnh ghép. Hãy thử lại.')
     } finally {
@@ -362,7 +358,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
     <div className="dlg-actions">
       <button type="button" className="ghost" onClick={close}>Đóng</button>
       <button type="button" className="primary" disabled={busy || photos.length < COLLAGE_MIN} onClick={() => void download()}>
-        {busy ? 'Đang xử lý…' : 'Tải ảnh ghép'}
+        {busy ? 'Đang xử lý…' : collageSaveLabel}
       </button>
     </div>
   </dialog>

@@ -13,6 +13,7 @@ Web app chỉnh ảnh chân dung ngay trong trình duyệt, ưu tiên điện th
 - Xoá vật thể bằng AI (LaMa, chạy bằng ONNX Runtime Web ngay trên máy người dùng)
 - Ghép 2–9 ảnh: đổi chỗ, xoá ảnh, kéo vạch để đổi độ rộng từng ảnh, cân màu theo một ảnh
 - So sánh trước/sau, hoàn tác/làm lại 20 bước, tự lưu bản nháp vào IndexedDB
+- Lưu ảnh: máy tính tải tệp xuống; điện thoại có nút **Lưu vào thư viện ảnh** (iPhone/iPad mở bảng Chia sẻ → Lưu hình ảnh, Android lưu vào Thư viện)
 
 ## Công nghệ
 
@@ -46,11 +47,10 @@ Khi phát triển, mở `/#demo` (hoặc `/#demo-crop`, `/#demo-preset`, `/#demo
 
 Model nhận diện khuôn mặt, dáng người và tách nền nằm sẵn trong `public/models/`.
 
-Xoá vật thể dùng model LaMa của OpenCV Zoo (`inpainting_lama_2025jan.onnx`, ~88 MB, Apache-2.0). Tệp này **không có trong repo** và không được đưa vào bản build, vì Cloudflare giới hạn 25 MiB mỗi tệp:
+Xoá vật thể dùng model LaMa của OpenCV Zoo (`inpainting_lama_2025jan.onnx`, ~88 MB, Apache-2.0). Cloudflare giới hạn 25 MiB mỗi tệp, nên model được chia thành 4 phần trong `public/models/lama/` kèm `manifest.json`. Web tự phục vụ các phần này (cùng tên miền, không cần CORS); trình duyệt tải lần lượt, ghép lại, kiểm tra SHA-256 rồi lưu vào Cache Storage để lần sau không phải tải lại.
 
-- **Bản build** mặc định tải model thẳng từ Hugging Face (URL ghim theo commit, xem `DEFAULT_MODEL_URL` trong `src/services/repair.ts`). Trình duyệt kiểm tra SHA-256 rồi lưu vào Cache Storage, nên lần sau không phải tải lại.
-- **Tự host model**: tải tệp lên nơi phục vụ HTTPS có CORS (ví dụ Cloudflare R2), rồi đặt `VITE_REPAIR_MODEL_URL` thành URL đó **trước khi build**. Đặt `VITE_REPAIR_MODEL_URL=off` để tắt tính năng.
-- **Khi chạy dev**: đặt tệp vào `public/models/inpainting_lama.onnx`.
+- **Đổi model**: đặt tệp vào `public/models/inpainting_lama.onnx` (không đưa lên git) rồi chạy `node scripts/split-model.mjs`.
+- **Host ở nơi khác**: đặt `VITE_REPAIR_MODEL_URL` (tệp `.onnx` hoặc `manifest.json`, máy chủ phải có CORS) **trước khi build**. Đặt `off` để tắt tính năng.
 
 `public/_headers` bật COOP/COEP để trình duyệt hỗ trợ (Chrome, Edge, Firefox) chạy model nhiều luồng; Safari tự chạy một luồng.
 
@@ -64,6 +64,7 @@ Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm g
 | `test/repair.test.ts` | Nguồn model, khung cắt quanh vùng tô, tiến độ và giới hạn thời gian, thông báo lỗi, mảng vá đúng vị trí |
 | `test/modelLoader.test.ts` | Tải model: máy chủ trả HTML, 404, mất mạng, tải thiếu, sai SHA-256, cache |
 | `test/lama.test.ts` | Chuyển dữ liệu ảnh ↔ model, làm mềm mép mảng vá |
+| `test/save.test.ts` | Nhận diện iPhone/iPad/Android/máy tính, lưu vào thư viện ảnh, các trường hợp bảng chia sẻ bị huỷ hoặc bị chặn |
 | `test/image.test.ts` | Mở ảnh trên trình duyệt cũ (Chrome < 112, Safari cũ), ảnh hỏng, HEIC |
 | `test/model/lama.test.ts` | Chạy model thật: đúng tệp, lấp lỗ đúng màu |
 

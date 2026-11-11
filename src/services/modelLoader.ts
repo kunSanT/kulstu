@@ -33,30 +33,18 @@ async function openCache() {
   }
 }
 
-export async function loadModel(spec: ModelSpec, onProgress: (loaded: number, total: number) => void = () => {}): Promise<Uint8Array> {
-  const cache = await openCache()
-  const cached = await cache?.match(spec.url).catch(() => undefined)
-  if (cached) {
-    try {
-      const bytes = new Uint8Array(await cached.arrayBuffer())
-      await verify(bytes, spec)
-      onProgress(bytes.length, bytes.length)
-      return bytes
-    } catch {
-      await cache?.delete(spec.url).catch(() => false)
-    }
-  }
-
+/** Tải một tệp, báo số byte đã nhận. Từ chối trang HTML do máy chủ trả nhầm cho tệp thiếu. */
+async function download(url: string, onBytes: (loaded: number) => void): Promise<Uint8Array> {
   let response: Response
   try {
-    response = await fetch(spec.url, { mode: 'cors', credentials: 'omit' })
+    response = await fetch(url, { mode: 'cors', credentials: 'omit' })
   } catch (error) {
-    throw new ModelError('network', `Không kết nối được tới ${spec.url}: ${String(error)}`)
+    throw new ModelError('network', `Không kết nối được tới ${url}: ${String(error)}`)
   }
-  if (response.status === 404 || response.status === 410) throw new ModelError('missing', `Máy chủ trả ${response.status}`)
-  if (!response.ok) throw new ModelError('network', `Máy chủ trả ${response.status}`)
+  if (response.status === 404 || response.status === 410) throw new ModelError('missing', `${url}: máy chủ trả ${response.status}`)
+  if (!response.ok) throw new ModelError('network', `${url}: máy chủ trả ${response.status}`)
   if (/text\/html/i.test(response.headers.get('content-type') ?? ''))
-    throw new ModelError('missing', 'Máy chủ trả trang HTML thay vì model')
+    throw new ModelError('missing', `${url}: máy chủ trả trang HTML thay vì model`)
 
   // content-length là cỡ đã nén nếu máy chủ nén, khi đó không dùng để đối chiếu
   const encoded = !!response.headers.get('content-encoding')
@@ -74,7 +62,7 @@ export async function loadModel(spec: ModelSpec, onProgress: (loaded: number, to
         if (done) break
         chunks.push(value)
         loaded += value.length
-        onProgress(loaded, total)
+        onBytes(loaded)
       }
       bytes = new Uint8Array(loaded)
       let offset = 0
@@ -84,10 +72,65 @@ export async function loadModel(spec: ModelSpec, onProgress: (loaded: number, to
       }
     }
   } catch (error) {
-    throw new ModelError('network', `Tải model bị ngắt: ${String(error)}`)
+    throw new ModelError('network', `Tải ${url} bị ngắt: ${String(error)}`)
   }
-  if (total && bytes.length !== total) throw new ModelError('network', `Tải được ${bytes.length}/${total} byte`)
-  await verify(bytes, spec)
+  if (total && bytes.length !== total) throw new ModelError('network', `${url}: tải được ${bytes.length}/${total} byte`)
+  return bytes
+}
+
+/** Danh sách các phần của model (scripts/split-model.mjs tạo ra). */
+export type ModelManifest = { bytes: number; sha256?: string; parts: { file: string; bytes: number }[] }
+
+async function downloadParts(url: string, onProgress: (loaded: number, total: number) => void) {
+  const head = await download(url, () => {})
+  let manifest: ModelManifest
+  try {
+    manifest = JSON.parse(new TextDecoder().decode(head))
+  } catch {
+    throw new ModelError('missing', `${url}: không phải danh sách phần của model`)
+  }
+  if (!Array.isArray(manifest.parts) || !manifest.parts.length || !(manifest.bytes > 0)
+    || manifest.parts.reduce((sum, part) => sum + part.bytes, 0) !== manifest.bytes)
+    throw new ModelError('corrupt', `${url}: danh sách phần không hợp lệ`)
+  const bytes = new Uint8Array(manifest.bytes)
+  let offset = 0
+  for (const part of manifest.parts) {
+    const chunk = await download(new URL(part.file, new URL(url, location.href)).href, (loaded) => onProgress(offset + loaded, manifest.bytes))
+    if (chunk.length !== part.bytes) throw new ModelError('network', `${part.file}: tải được ${chunk.length}/${part.bytes} byte`)
+    bytes.set(chunk, offset)
+    offset += chunk.length
+  }
+  return { bytes, sha256: manifest.sha256 }
+}
+
+/**
+ * Tải model. spec.url là tệp .onnx, hoặc manifest .json liệt kê các phần (để mỗi tệp dưới 25 MiB).
+ * Báo tiến độ theo tổng số byte; kiểm tra SHA-256; lưu nguyên model vào Cache Storage.
+ */
+export async function loadModel(spec: ModelSpec, onProgress: (loaded: number, total: number) => void = () => {}): Promise<Uint8Array> {
+  const cache = await openCache()
+  const cached = await cache?.match(spec.url).catch(() => undefined)
+  if (cached) {
+    try {
+      const bytes = new Uint8Array(await cached.arrayBuffer())
+      await verify(bytes, spec)
+      onProgress(bytes.length, bytes.length)
+      return bytes
+    } catch {
+      await cache?.delete(spec.url).catch(() => false)
+    }
+  }
+
+  let bytes: Uint8Array
+  let sha256 = spec.sha256
+  if (/\.json(\?|#|$)/i.test(spec.url)) {
+    const result = await downloadParts(spec.url, onProgress)
+    bytes = result.bytes
+    sha256 ??= result.sha256
+  } else {
+    bytes = await download(spec.url, (loaded) => onProgress(loaded, 0))
+  }
+  await verify(bytes, { ...spec, sha256 })
   onProgress(bytes.length, bytes.length)
   await cache?.put(spec.url, new Response(bytes as Uint8Array<ArrayBuffer>, { headers: { 'content-type': 'application/octet-stream' } })).catch(() => {})
   return bytes
