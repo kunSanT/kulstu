@@ -46,12 +46,21 @@ describe('resolveModelUrl', () => {
 })
 
 describe('repairWindow', () => {
-  test('khung vuông quanh nét tô, rộng 1,7 lần, kẹp trong ảnh', () => {
+  test('vùng nhỏ: lấy khung 512 px quanh nét tô, chạy đúng độ phân giải gốc (không phóng to làm nhoè)', () => {
     const win = repairWindow(1000, 800, [{ pts: [.5, .5], r: .01 }])
-    assert.equal(win.w, win.h)
-    assert.ok(win.w >= 34 && win.w <= 40)
+    assert.deepEqual([win.w, win.h, win.dw, win.dh], [512, 512, 512, 512])
+    assert.equal(win.factor, 1)
     assert.ok(win.x >= 0 && win.y >= 0 && win.x + win.w <= 1000 && win.y + win.h <= 800)
+    assert.ok(Math.abs(win.x + 256 - 500) <= 1 && Math.abs(win.y + 256 - 400) <= 1, 'nét tô nằm giữa khung')
+  })
+  test('vùng lớn: khung ≥ 2,2 lần vùng tô để AI thấy đủ bối cảnh', () => {
+    const win = repairWindow(4000, 3000, [{ pts: [.4, .5, .6, .5], r: .01 }])
+    assert.ok(win.w >= 2.2 * (800 + 80) - 1)
     assert.equal(Math.max(win.dw, win.dh), SIDE)
+  })
+  test('ảnh nhỏ hơn 512: lấy trọn ảnh', () => {
+    const win = repairWindow(300, 200, [{ pts: [.5, .5], r: .02 }])
+    assert.deepEqual([win.x, win.y, win.w, win.h], [0, 0, 300, 200])
   })
   test('nét sát mép ảnh: khung không vượt ra ngoài', () => {
     const win = repairWindow(400, 300, [{ pts: [0, 0, .02, .01], r: .05 }])
@@ -165,18 +174,23 @@ describe('infer', () => {
 })
 
 describe('repairRegion → drawRepairs', () => {
-  test('mảng vá chỉ phủ vùng đã tô, đúng vị trí, phần ngoài giữ ảnh gốc', async () => {
-    const source = makeCanvas(400, 300, [0, 0, 200])
-    behave = (req, reply) => reply({ type: 'done', pixels: fill(req, [250, 10, 10]) })
-    const stroke = { pts: [.5, .5], r: .03 }
-    const patch = await repairRegion(source, [stroke])
+  test('vật đỏ trên nền xanh: vật biến mất đúng chỗ, phần còn lại của ảnh không đổi', async () => {
+    // vật đỏ 16×16 ở giữa ảnh 400×300
+    const source = makeCanvas(400, 300, (x, y) => (Math.abs(x - 200) < 8 && Math.abs(y - 150) < 8 ? [220, 20, 20] : [0, 0, 200]))
+    // model giả: trả lại ảnh vào, lỗ được lấp bằng màu nền (như một model lấp tốt)
+    behave = (req, reply) => {
+      const out = req.rgba
+      for (let i = 0; i < out.length; i += 4) if (req.mask[i + 3] > 32) out.set([0, 0, 200, 255], i)
+      reply({ type: 'done', pixels: out })
+    }
+    const patch = await repairRegion(source, [{ pts: [.5, .5], r: .025 }])
     for (const v of [patch.x, patch.y, patch.w, patch.h]) assert.ok(v >= 0 && v <= 1)
 
-    const out = makeCanvas(400, 300, [0, 0, 200])
+    const out = makeCanvas(400, 300, (x, y) => (Math.abs(x - 200) < 8 && Math.abs(y - 150) < 8 ? [220, 20, 20] : [0, 0, 200]))
     await drawRepairs(out, [patch])
-    assert.deepEqual(pixel(out, 200, 150).slice(0, 3), [250, 10, 10], 'tâm nét tô đã được lấp')
-    assert.deepEqual(pixel(out, 200 + 30, 150).slice(0, 3), [0, 0, 200], 'ngoài nét tô vẫn là ảnh gốc')
+    for (const [x, y] of [[200, 150], [193, 143], [206, 156]]) assert.deepEqual(pixel(out, x, y).slice(0, 3), [0, 0, 200], `vật còn ở ${x},${y}`)
     assert.deepEqual(pixel(out, 5, 5).slice(0, 3), [0, 0, 200])
+    assert.deepEqual(pixel(out, 395, 295).slice(0, 3), [0, 0, 200])
   })
 
   test('mặt nạ gửi cho model khớp vị trí nét tô trong khung 512', async () => {
@@ -185,7 +199,10 @@ describe('repairRegion → drawRepairs', () => {
     const source = makeCanvas(1000, 1000, [50, 50, 50])
     await repairRegion(source, [{ pts: [.5, .5], r: .02 }])
     const at = (x: number, y: number) => mask![(y * 512 + x) * 4 + 3]
-    assert.ok(at(256, 256) > 32, 'tâm khung là vùng cần lấp')
+    assert.equal(at(256, 256), 255, 'tâm khung là vùng cần lấp')
     assert.equal(at(5, 5), 0, 'góc khung không bị lấp')
+    // ảnh 1000 px, khung 512 px 1:1, nét bán kính 20 px (+2 px viền nét): mặt nạ rộng thêm DILATE + FEATHER = 14 px
+    assert.equal(at(256 + 22 + 13, 256), 255, 'mặt nạ phủ cả viền mờ quanh vật')
+    assert.equal(at(256 + 22 + 16, 256), 0)
   })
 })

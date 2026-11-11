@@ -1,5 +1,5 @@
 import type { Erase } from '../engine/erase'
-import { featherAlpha, LAMA_SHA256, LAMA_SIDE } from '../engine/lama'
+import { composeFill, distanceToMask, holeMask, LAMA_SHA256, LAMA_SIDE } from '../engine/lama'
 import type { RepairPatch } from '../engine/recipe'
 import type { ModelSpec } from './modelLoader'
 import type { RepairReply } from './repair.worker'
@@ -99,7 +99,11 @@ export function infer(rgba: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedAr
   })
 }
 
-/** Vùng ảnh (pixel nguồn) đưa vào model: vuông quanh các nét tô, rộng hơn 1,7 lần để AI thấy đủ bối cảnh. */
+/**
+ * Vùng ảnh (pixel nguồn) đưa vào model: vuông quanh các nét tô, rộng ít nhất 2,2 lần để AI thấy đủ bối cảnh.
+ * Vùng nhỏ lấy hẳn khung 512 px của ảnh để chạy ở đúng độ phân giải gốc: không phóng to, nên phần lấp
+ * nét và có hạt giống ảnh xung quanh (phóng to rồi thu lại làm phần lấp nhoè, dễ nhận ra).
+ */
 export function repairWindow(width: number, height: number, strokes: Erase[]) {
   const long = Math.max(width, height)
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity
@@ -112,7 +116,7 @@ export function repairWindow(width: number, height: number, strokes: Erase[]) {
   if (!Number.isFinite(left)) throw new Error('Chưa có vùng tô.')
   const span = Math.max(right - left, bottom - top)
   if (span > long * .8) throw new Error('Vùng tô quá rộng. Hãy chia thành vài vùng nhỏ để xử lý.')
-  const side = Math.ceil(Math.max(40, span * 1.7))
+  const side = Math.ceil(Math.max(span * 2.2, Math.min(SIDE, long)))
   const w = Math.min(side, width)
   const h = Math.min(side, height)
   const x = Math.min(width - w, Math.max(0, Math.round((left + right - w) / 2)))
@@ -148,9 +152,12 @@ export async function repairRegion(source: HTMLCanvasElement, strokes: Erase[], 
     }
     g.stroke()
   }
-  const mask = g.getImageData(0, 0, SIDE, SIDE).data
-  const pixels = await infer(input, mask.slice(), onProgress)
-  featherAlpha(pixels, mask, SIDE)
+  // nới mặt nạ để phủ cả viền mờ và bóng sát vật; phần nới thêm được hoà dần vào ảnh gốc
+  const distance = distanceToMask(g.getImageData(0, 0, SIDE, SIDE).data, SIDE)
+  const original = input.slice()
+  const pixels = await infer(input, holeMask(distance, SIDE), onProgress)
+  const seed = Math.round((strokes[0]?.pts[0] ?? 0) * 65535) * 31 + Math.round((strokes[0]?.pts[1] ?? 0) * 65535)
+  composeFill(original, pixels, distance, SIDE, seed)
   g.putImageData(new ImageData(pixels, SIDE, SIDE), 0, 0)
   const patch = document.createElement('canvas')
   patch.width = dw
