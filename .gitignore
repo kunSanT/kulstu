@@ -33,3 +33,6 @@ public/models/inpainting_lama.onnx
 # ảnh chụp kiểm thử và thư mục tạm
 .shots
 app-tmp
+
+# wrangler
+.wrangler

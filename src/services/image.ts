@@ -34,9 +34,9 @@ export async function decodeFile(f: Blob, fileName: string, previewLong = PREVIE
   const heic = /hei[cf]$/i.test(f.type) || /\.hei[cf]$/i.test(fileName)
   if (f.size > MAX_BYTES)
     throw new ImportError(`Ảnh nặng ${Math.round(f.size / 1048576)} MB, vượt giới hạn 30 MB. Hãy chọn bản nhỏ hơn.`)
-  let bmp: ImageBitmap
+  let bmp: ImageBitmap | HTMLCanvasElement
   try {
-    bmp = await createImageBitmap(f, { imageOrientation: 'from-image' })
+    bmp = await decodeBitmap(f)
   } catch {
     throw new ImportError(
       heic
@@ -46,10 +46,44 @@ export async function decodeFile(f: Blob, fileName: string, previewLong = PREVIE
   }
   if (bmp.width * bmp.height > MAX_PIXELS) {
     const mp = Math.round((bmp.width * bmp.height) / 1e6)
-    bmp.close()
+    if ('close' in bmp) bmp.close()
     throw new ImportError(`Ảnh ${mp} MP vượt giới hạn 24 MP. Hãy chọn bản nhỏ hơn.`)
   }
   return makeSource(bmp, f, fileName.replace(/\.[^.]+$/, '') || 'anh', false, previewLong)
+}
+
+/**
+ * Giải mã ảnh, xoay theo EXIF. Chrome/Edge trước 112 và Safari đời cũ không nhận giá trị
+ * imageOrientation 'from-image' và ném TypeError, nên thử lại không kèm tuỳ chọn
+ * (các bản đó vốn xoay theo EXIF mặc định), cuối cùng mới dùng thẻ <img>.
+ */
+export async function decodeBitmap(f: Blob): Promise<ImageBitmap | HTMLCanvasElement> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await createImageBitmap(f, { imageOrientation: 'from-image' })
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error
+    }
+    try {
+      return await createImageBitmap(f)
+    } catch {
+      // thử thẻ <img> bên dưới
+    }
+  }
+  const url = URL.createObjectURL(f)
+  try {
+    const image = new Image()
+    image.src = url
+    await image.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    if (!canvas.width || !canvas.height) throw new Error('empty image')
+    canvas.getContext('2d')!.drawImage(image, 0, 0)
+    return canvas
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 export function makeSource(bitmap: ImageBitmap | HTMLCanvasElement, blob: Blob, name: string, sample: boolean, previewLong = PREVIEW_LONG): Source {

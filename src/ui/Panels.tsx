@@ -281,15 +281,16 @@ export function HealPanel() {
   const m = useStore((s) => s.recipe.erase.length + s.recipe.repairs.length)
   const pending = useStore((s) => s.repairStrokes.length)
   const processing = useStore((s) => s.repairing)
+  const progress = useStore((s) => s.repairProgress)
+  const busyText = progress === 'running' ? 'AI đang xoá vật thể…' : typeof progress === 'number' ? `Đang tải model AI ${progress}%…` : 'AI đang chạy…'
   return (
     <>
       <div className="chips" role="group" aria-label="Công cụ xoá">
         <button type="button" className="chip" aria-pressed={tool === 'spot'} onClick={() => setHealTool('spot')}>Xoá mụn</button>
         <button type="button" className="chip" aria-pressed={tool === 'blur'} onClick={() => setHealTool('blur')}>Cọ làm mờ</button>
         <button type="button" className="chip" disabled={processing || !repairAvailable} aria-pressed={tool === 'object'} onClick={() => setHealTool('object')}>Xoá vật thể AI</button>
-        <button type="button" className="chip" disabled={processing || !repairAvailable} aria-pressed={tool === 'repair'} onClick={() => setHealTool('repair')}>Sửa vùng AI</button>
       </div>
-      {!repairAvailable && <p className="note">Bản này chưa bật xóa và sửa vùng AI.</p>}
+      {!repairAvailable && <p className="note">Bản này chưa bật xoá vật thể AI.</p>}
       {tool === 'spot' ? (
         <>
           <p className="note">
@@ -312,7 +313,7 @@ export function HealPanel() {
       ) : (
         <>
           <p className="note">
-            {tool === 'repair' ? 'Tô vùng cần sửa.' : 'Tô kín vật thể cần xóa.'} Lần đầu tải model khoảng 88 MiB.
+            Tô kín vật thể cần xoá. Lần đầu tải model khoảng 88 MiB, các lần sau dùng bản đã lưu.
           </p>
           <Band label="Cỡ cọ" value={eraseSize} min={1} max={100} noReset disabled={processing} onLive={setEraseSize} onCommit={() => {}} />
           <div className="chips" role="group" aria-label="Vùng tô AI">
@@ -323,7 +324,7 @@ export function HealPanel() {
             <button type="button" className="chip" disabled={!pending || processing} onClick={clearRepairSelection}>Bỏ vùng tô</button>
           </div>
           <div className="row-between">
-            <span className="count" role="status">{processing ? 'AI đang chạy…' : pending ? `${pending} nét đã tô` : m ? `Đã xử lý ${m} lần` : ''}</span>
+            <span className="count" role="status">{processing ? busyText : pending ? `${pending} nét đã tô` : m ? `Đã xử lý ${m} lần` : ''}</span>
             <button type="button" className="chip" disabled={!m || processing} onClick={() => change((r) => ({ ...r, erase: [], repairs: [] }))}>
               Hoàn lại vật thể đã xoá
             </button>

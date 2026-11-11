@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kulstu",
+  "compatibility_date": "2026-11-10",
+  "observability": {
+    "enabled": true
+  },
+  // Web tĩnh: chỉ phục vụ thư mục build, không có mã Worker.
+  // Không bật "single-page-application": app dùng địa chỉ dạng #/, nên tệp thiếu
+  // trả 404 thật thay vì index.html (từng khiến model AI tải nhầm trang HTML).
+  "assets": {
+    "directory": "./dist"
+  },
+  // Cần cho bản xem trước của pull request (npx wrangler preview).
+  "previews": {}
+}
