@@ -20,7 +20,7 @@ class FakeWorker {
 }
 ;(globalThis as Record<string, unknown>).Worker = FakeWorker
 
-const { drawRepairs, infer, repairMessages, repairRegion, repairWindow, resolveModelUrl, RUN_TIMEOUT, STALL_TIMEOUT } =
+const { drawRepairs, IDLE_RELEASE, infer, RepairError, repairMessages, repairRegion, repairWindow, resolveModelUrl, RUN_TIMEOUT, STALL_TIMEOUT } =
   await import('../src/services/repair.ts')
 
 const SIDE = 512
@@ -32,7 +32,12 @@ const fill = (request: RepairRequest, color: [number, number, number]) => {
 }
 
 beforeEach(() => { created = 0; terminated = 0 })
-afterEach(() => { mock.timers.reset() })
+// Chạy hết hẹn giờ còn treo (vd. hẹn huỷ worker khi rảnh) trước khi tắt hẹn giờ giả: node:test dùng lại số hiệu
+// hẹn giờ giữa các lần bật, nên xoá một hẹn giờ cũ sót lại sẽ xoá nhầm hẹn giờ của test sau.
+afterEach(() => {
+  try { mock.timers.runAll() } catch { /* chưa bật hẹn giờ giả */ }
+  mock.timers.reset()
+})
 
 describe('resolveModelUrl', () => {
   test('LỖI ĐÃ GẶP KHI DEPLOY: mặc định dùng bản chia phần do chính web phục vụ (cùng tên miền, không cần CORS)', () => {
@@ -115,6 +120,31 @@ describe('infer', () => {
       assert.equal(terminated, before + 1)
     })
   }
+
+  test('lỗi có mã để giao diện xử lý riêng (thiếu bộ nhớ → xoá nhanh không cần AI)', async () => {
+    behave = (_, reply) => reply({ type: 'error', code: 'memory', detail: 'RangeError: WebAssembly.Memory.grow' })
+    const error = console.error
+    console.error = () => {}
+    try {
+      await assert.rejects(infer(blank(), blank()), (e: unknown) => e instanceof RepairError && e.code === 'memory')
+    } finally {
+      console.error = error
+    }
+  })
+
+  test('rảnh IDLE_RELEASE ms thì huỷ worker để trả bộ nhớ; dùng tiếp trước hạn thì giữ worker', async () => {
+    mock.timers.enable({ apis: ['setTimeout'] })
+    behave = (req, reply) => reply({ type: 'done', pixels: req.rgba })
+    await infer(blank(), blank())
+    const made = created, killed = terminated
+    mock.timers.tick(IDLE_RELEASE - 1000)
+    await infer(blank(), blank())
+    assert.equal(created, made, 'còn trong hạn: dùng lại worker cũ')
+    mock.timers.tick(IDLE_RELEASE + 1)
+    assert.equal(terminated, killed + 1, 'hết hạn: worker bị huỷ')
+    await infer(blank(), blank())
+    assert.equal(created, made + 1, 'lần sau tạo worker mới')
+  })
 
   test('LỖI ĐÃ GẶP: tải model lâu (mạng chậm) không bị tính vào giới hạn thời gian chạy', async () => {
     mock.timers.enable({ apis: ['setTimeout'] })

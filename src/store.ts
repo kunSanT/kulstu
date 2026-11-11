@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { applyErases, MAX_ERASES, type Erase } from './engine/erase'
 import { applySpots } from './engine/heal'
-import { drawRepairs, repairRegion } from './services/repair'
+import { drawRepairs, RepairError, repairRegion } from './services/repair'
 import { detectPlatform, saveImage, savedMessage, type SaveResult } from './services/save'
 import type { Push } from './engine/liquify'
 import { freshRecipe, MAX_PUSHES, MAX_SPOTS, requiresFace, usesBody, usesFace, usesHair, usesPersonMask, type AdjKey, type Body, type Features, type Recipe, type Spot } from './engine/recipe'
@@ -444,7 +444,16 @@ export async function runRepair() {
     change((r) => ({ ...r, repairs: [...r.repairs, patch] }))
     clearRepairSelection()
   } catch (error) {
-    if (state.src === src) toast(error instanceof Error ? error.message : 'AI chưa xử lý được. Hãy thử lại.', { err: true })
+    if (state.src !== src) return
+    // máy không đủ bộ nhớ cho AI (hay gặp trên iPhone đời cũ): xoá bằng cách nhanh không cần AI
+    if (error instanceof RepairError && error.code === 'memory' && state.repairStrokes === repairStrokes
+      && state.recipe.erase.length + repairStrokes.length <= MAX_ERASES) {
+      change((r) => ({ ...r, erase: [...r.erase, ...repairStrokes.map(({ pts, r: radius }) => ({ pts, r: radius }))] }))
+      clearRepairSelection()
+      toast('Máy không đủ bộ nhớ để chạy AI nên đã xoá bằng cách nhanh. Kết quả đẹp nhất trên nền đơn giản.')
+      return
+    }
+    toast(error instanceof Error ? error.message : 'AI chưa xử lý được. Hãy thử lại.', { err: true })
   } finally {
     set({ repairing: false, repairProgress: null })
   }

@@ -36,6 +36,19 @@ export const repairMessages: Record<Extract<RepairReply, { type: 'error' }>['cod
   worker: 'Không khởi động được AI. Web có thể vừa được cập nhật, hãy tải lại trang rồi thử lại.',
 }
 
+export type RepairErrorCode = keyof typeof repairMessages
+/** Lỗi xoá vật thể kèm mã, để giao diện xử lý riêng (vd. thiếu bộ nhớ thì chuyển sang xoá nhanh không cần AI). */
+export class RepairError extends Error {
+  code: RepairErrorCode
+  constructor(code: RepairErrorCode) {
+    super(repairMessages[code])
+    this.code = code
+  }
+}
+
+/** Huỷ worker sau từng này ms không dùng, để trả lại ~600 MB bộ nhớ của model (quan trọng trên iPhone). */
+export const IDLE_RELEASE = 30_000
+let idleTimer: ReturnType<typeof setTimeout> | undefined
 let worker: Worker | null = null
 const createWorker = () => new Worker(new URL('./repair.worker.ts', import.meta.url), { type: 'module' })
 const decoded = new WeakMap<RepairPatch, Promise<HTMLImageElement>>()
@@ -60,6 +73,7 @@ export type RepairProgress = { phase: 'download'; loaded: number; total: number 
 
 export function infer(rgba: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedArray<ArrayBuffer>,
   onProgress: (progress: RepairProgress) => void = () => {}, model: ModelSpec = { url: new URL(modelUrl, location.href).href, sha256: MODEL_SHA256 }) {
+  clearTimeout(idleTimer)
   const job = worker ??= createWorker()
   return new Promise<Uint8ClampedArray<ArrayBuffer>>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -77,7 +91,7 @@ export function infer(rgba: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedAr
       job.terminate()
       if (worker === job) worker = null
       if (detail) console.error('KulStu repair:', reason, detail)
-      reject(new Error(repairMessages[reason]))
+      reject(new RepairError(reason))
     }
     arm(STALL_TIMEOUT, 'stall')
     job.onmessage = ({ data }: MessageEvent<RepairReply>) => {
@@ -89,6 +103,13 @@ export function infer(rgba: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedAr
         onProgress({ phase: 'running' })
       } else if (data.type === 'done') {
         finish()
+        idleTimer = setTimeout(() => {
+          if (worker !== job) return
+          job.terminate()
+          worker = null
+        }, IDLE_RELEASE)
+        // Node (khi chạy test): hẹn giờ này không giữ tiến trình lại; trình duyệt không có unref
+        ;(idleTimer as { unref?: () => void } | undefined)?.unref?.()
         resolve(data.pixels)
       } else {
         fail(data.code, data.detail)
