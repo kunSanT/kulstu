@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KulStu — Giao diện Chỉnh sửa Chân dung v1</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    /* Tùy biến thanh cuộn tối */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #13131a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2b2b3b;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3e3e52;
+    }
+    /* Slider Range Styling */
+    input[type=range] {
+      -webkit-appearance: none;
+      background: transparent;
+    }
+    input[type=range]:focus {
+      outline: none;
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 4px;
+      cursor: pointer;
+      background: #2a2a38;
+      border-radius: 2px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      height: 16px;
+      width: 16px;
+      border-radius: 50%;
+      background: #6366f1;
+      cursor: pointer;
+      -webkit-appearance: none;
+      margin-top: -6px;
+      box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+      transition: transform 0.1s ease, background-color 0.15s ease;
+    }
+    input[type=range]::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+      background: #818cf8;
+    }
+    /* Khung kéo Before/After */
+    .compare-container {
+      position: relative;
+      overflow: hidden;
+    }
+    .compare-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      overflow: hidden;
+      border-right: 2px solid #818cf8;
+      box-shadow: 2px 0 12px rgba(99, 102, 241, 0.6);
+    }
+    .compare-handle {
+      position: absolute;
+      top: 50%;
+      right: -14px;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      background: #6366f1;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: ew-resize;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      z-index: 20;
+    }
+  </style>
+</head>
+<body class="bg-[#0e0e13] text-[#e2e8f0] h-screen w-screen flex flex-col overflow-hidden">
+
+  <!-- TOP HEADER (Tối giản, chuẩn Brand KulStu) -->
+  <header class="h-14 bg-[#14141c] border-b border-[#232332] px-4 flex items-center justify-between z-30 shrink-0">
+    <!-- Trái: Logo & Tình trạng lưu nháp -->
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+          <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a9 9 0 0 0-9 9 9 9 0 0 0 9 9 9 9 0 0 0 9-9 9 9 0 0 0-9-9Z"></path>
+            <path d="M12 7v5l3 3"></path>
+            <circle cx="12" cy="12" r="3" fill="currentColor" fill-opacity="0.2"></circle>
+          </svg>
+        </div>
+        <span class="font-bold text-lg tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">KulStu</span>
+        <span class="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">v1.0</span>
+      </div>
+
+      <div class="h-4 w-[1px] bg-[#272738] hidden sm:block"></div>
+
+      <!-- Trạng thái tự lưu nháp (Human-friendly, không dùng từ IndexedDB) -->
+      <div id="saveStatusBadge" class="hidden sm:flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 6 9 17l-5-5"></path>
+        </svg>
+        <span>Đã tự động lưu nháp</span>
+      </div>
+    </div>
+
+    <!-- Giữa: Điều khiển Xem ảnh & Hoàn tác -->
+    <div class="flex items-center gap-1 sm:gap-2">
+      <!-- Undo / Redo & Bước -->
+      <div class="flex items-center bg-[#1b1b26] p-0.5 rounded-lg border border-[#28283a]">
+        <button id="undoBtn" title="Hoàn tác (Ctrl+Z)" class="p-1.5 text-slate-400 hover:text-white hover:bg-[#262638] rounded transition disabled:opacity-30">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 14 4 9l5-5"></path>
+            <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"></path>
+          </svg>
+        </button>
+        <button id="redoBtn" title="Làm lại (Ctrl+Y)" class="p-1.5 text-slate-400 hover:text-white hover:bg-[#262638] rounded transition disabled:opacity-30">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m15 14 5-5-5-5"></path>
+            <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"></path>
+          </svg>
+        </button>
+        <span id="stepCounter" class="text-[11px] text-slate-400 font-medium px-2 border-l border-[#2e2e42] hidden md:inline">Bước 4/20</span>
+      </div>
+
+      <div class="h-4 w-[1px] bg-[#272738] hidden sm:block"></div>
+
+      <!-- Nút so sánh gốc (Hold to view) -->
+      <button id="holdCompareBtn" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-[#1b1b26] hover:bg-[#262638] border border-[#28283a] rounded-lg transition active:bg-indigo-600 active:text-white select-none">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
+        <span class="hidden md:inline">Nhấn giữ xem</span> <span>Ảnh gốc</span>
+      </button>
+
+      <!-- Nút bật/tắt Chia đôi Before/After -->
+      <button id="toggleSplitBtn" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-[#1b1b26] hover:bg-[#262638] border border-[#28283a] rounded-lg transition">
+        <svg class="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+          <path d="M12 3v18"></path>
+        </svg>
+        <span>Chia đôi</span>
+      </button>
+    </div>
+
+    <!-- Phải: Nạp ảnh & Nút Xuất ảnh nổi bật -->
+    <div class="flex items-center gap-2">
+      <!-- Đổi chế độ xem Desktop / Mobile để test -->
+      <button id="viewToggleBtn" title="Chuyển chế độ xem thử nghiệm (Desktop / Mobile)" class="px-2.5 py-1.5 text-xs text-slate-400 hover:text-white bg-[#1a1a24] hover:bg-[#242434] rounded-lg border border-[#272738] flex items-center gap-1.5 transition">
+        <svg id="deviceIcon" class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="14" height="20" x="5" y="2" rx="2" ry="2"></rect>
+          <path d="M12 18h.01"></path>
+        </svg>
+        <span id="deviceLabel" class="hidden sm:inline">Chế độ: Desktop</span>
+      </button>
+
+      <!-- Input file ẩn -->
+      <input type="file" id="imageUploader" accept="image/jpeg,image/png,image/webp" class="hidden">
+      <button onclick="document.getElementById('imageUploader').click()" class="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-[#1b1b26] hover:bg-[#252536] border border-[#2c2c3e] rounded-lg flex items-center gap-1.5 transition">
+        <svg class="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" x2="12" y1="3" y2="15"></line>
+        </svg>
+        <span class="hidden sm:inline">Chọn ảnh</span>
+      </button>
+
+      <!-- CTA Xuất ảnh -->
+      <button id="exportModalBtn" class="px-4 py-1.5 text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 rounded-lg shadow-md shadow-indigo-600/25 flex items-center gap-1.5 transition active:scale-95">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" x2="12" y1="15" y2="3"></line>
+        </svg>
+        <span>Xuất ảnh</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- BODY CHÍNH (CANVAS + BẢNG ĐIỀU KHIỂN) -->
+  <main id="appLayout" class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+
+    <!-- KHU VỰC CANVAS HIỂN THỊ ẢNH (Trung tâm) -->
+    <section class="flex-1 bg-[#0a0a0e] relative flex items-center justify-center p-4 overflow-hidden select-none">
+      
+      <!-- Container ảnh có thể zoom và so sánh -->
+      <div id="canvasViewport" class="relative max-w-full max-h-full flex items-center justify-center transition-transform duration-75">
+        
+        <div id="imageStage" class="compare-container rounded-xl overflow-hidden shadow-2xl border border-[#20202e] bg-[#121218]">
+          <!-- ẢNH ĐÃ CHỈNH (MẶC ĐỊNH BÊN DƯỚI) -->
+          <img id="editedImage" 
+               src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1000&q=80" 
+               alt="Chân dung mẫu" 
+               class="max-h-[68vh] md:max-h-[75vh] w-auto object-contain block pointer-events-none transition-[filter] duration-75">
+
+          <!-- ẢNH GỐC ĐỂ SO SÁNH (NẰM TRONG LỚP OVERLAY CHIA ĐÔI) -->
+          <div id="compareOverlay" class="compare-overlay hidden w-1/2">
+            <img id="originalImage" 
+                 src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1000&q=80" 
+                 alt="Chân dung gốc" 
+                 class="max-h-[68vh] md:max-h-[75vh] w-auto object-contain block pointer-events-none filter-none max-w-none">
+            <!-- Nút tay cầm kéo chia đôi Before/After -->
+            <div id="compareHandle" class="compare-handle">
+              <svg class="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="m9 18-6-6 6-6"></path>
+                <path d="m15 6 6 6-6 6"></path>
+              </svg>
+            </div>
+          </div>
+
+          <!-- Huy hiệu thông báo trạng thái so sánh -->
+          <div id="comparingBadge" class="absolute top-3 left-3 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded text-[11px] font-medium text-amber-300 border border-amber-400/30 hidden pointer-events-none">
+            Đang xem ảnh gốc
+          </div>
+        </div>
+
+      </div>
+
+      <!-- THANH CÔNG CỤ DƯỚI CANVAS (Zoom, Tỉ lệ, Bảo mật) -->
+      <div class="absolute bottom-3 left-4 right-4 flex items-center justify-between pointer-events-none">
+        <!-- Huy hiệu bảo mật (Thay thế dòng WebGL khô khan) -->
+        <div class="pointer-events-auto bg-[#14141c]/90 backdrop-blur-md border border-[#252536] px-3 py-1.5 rounded-full flex items-center gap-2 text-xs text-slate-300 shadow-lg">
+          <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"></path>
+          </svg>
+          <span class="hidden sm:inline">100% Xử lý trên máy bạn · Riêng tư tuyệt đối</span>
+          <span class="sm:hidden">100% Riêng tư</span>
+        </div>
+
+        <!-- Cụm điều khiển Zoom & Pan -->
+        <div class="pointer-events-auto bg-[#14141c]/90 backdrop-blur-md border border-[#252536] px-2 py-1 rounded-full flex items-center gap-1.5 text-xs text-slate-300 shadow-lg">
+          <button id="zoomOutBtn" class="w-6 h-6 flex items-center justify-center rounded-full hover:bg-[#252538] text-slate-400 hover:text-white transition">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"></path></svg>
+          </button>
+          <span id="zoomLevelText" class="w-10 text-center font-mono font-medium text-[11px]">100%</span>
+          <button id="zoomInBtn" class="w-6 h-6 flex items-center justify-center rounded-full hover:bg-[#252538] text-slate-400 hover:text-white transition">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+          </button>
+          <div class="w-[1px] h-3 bg-[#2a2a3e] mx-0.5"></div>
+          <button id="zoomResetBtn" title="Vừa khung hình" class="p-1 hover:bg-[#252538] rounded text-slate-400 hover:text-white transition">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h6v2H5v4H3V3zm12 0h6v6h-2V5h-4V3zM3 15h2v4h4v2H3v-6zm16 4h-4v2h6v-6h-2v4z"></path></svg>
+          </button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- BẢNG CÔNG CỤ ĐIỀU KHIỂN (INSPECTOR PANEL BÊN PHẢI) -->
+    <aside id="inspectorPanel" class="w-full md:w-80 lg:w-96 bg-[#121218] border-t md:border-t-0 md:border-l border-[#20202e] flex flex-col shrink-0 z-20 h-auto md:h-full max-h-[46vh] md:max-h-full">
+      
+      <!-- 4 TABS CHÍNH CỦA V1 (Đã loại bỏ công cụ thừa) -->
+      <nav class="flex items-center border-b border-[#20202e] bg-[#161622] p-1 gap-1 shrink-0">
+        <button data-tab="crop" class="tab-btn flex-1 py-2 px-1 text-xs font-medium rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#1f1f2e] flex flex-col items-center gap-1 transition">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 2v14a2 2 0 0 0 2 2h14"></path>
+            <path d="M18 22V8a2 2 0 0 0-2-2H2"></path>
+          </svg>
+          <span>Cắt / Xoay</span>
+        </button>
+
+        <button data-tab="adjust" class="tab-btn active flex-1 py-2 px-1 text-xs font-semibold rounded-lg text-white bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex flex-col items-center gap-1 transition">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 4h-7"></path><path d="M10 4H3"></path><path d="M14 1v6"></path>
+            <path d="M21 12h-3"></path><path d="M14 12H3"></path><path d="M18 9v6"></path>
+            <path d="M21 20H11"></path><path d="M7 20H3"></path><path d="M11 17v6"></path>
+          </svg>
+          <span>Chỉnh màu</span>
+        </button>
+
+        <button data-tab="preset" class="tab-btn flex-1 py-2 px-1 text-xs font-medium rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#1f1f2e] flex flex-col items-center gap-1 transition">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle>
+            <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle>
+            <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle>
+            <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle>
+            <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path>
+          </svg>
+          <span>Preset</span>
+        </button>
+
+        <button data-tab="beauty" class="tab-btn flex-1 py-2 px-1 text-xs font-medium rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#1f1f2e] flex flex-col items-center gap-1 transition relative">
+          <span class="absolute top-1 right-2 w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+          <svg class="w-4 h-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path>
+          </svg>
+          <span>Mịn da AI</span>
+        </button>
+      </nav>
+
+      <!-- NỘI DUNG TỪNG TAB -->
+      <div class="flex-1 overflow-y-auto p-4 space-y-5">
+        
+        <!-- ================= TAB 1: CẮT & XOAY (FR-02) ================= -->
+        <div id="tabContentCrop" class="tab-content hidden space-y-4">
+          <div class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Tỷ lệ cắt ảnh</div>
+          <div class="grid grid-cols-4 gap-2">
+            <button class="ratio-btn active p-2.5 rounded-lg bg-indigo-600/20 border border-indigo-500 text-white text-xs font-medium flex flex-col items-center gap-1">
+              <span class="w-4 h-4 border border-dashed border-indigo-400 rounded-sm"></span>
+              <span>Tự do</span>
+            </button>
+            <button class="ratio-btn p-2.5 rounded-lg bg-[#1a1a24] border border-[#272738] text-slate-300 hover:bg-[#222232] text-xs font-medium flex flex-col items-center gap-1">
+              <span class="w-4 h-4 border border-slate-400 rounded-sm"></span>
+              <span>1 : 1</span>
+            </button>
+            <button class="ratio-btn p-2.5 rounded-lg bg-[#1a1a24] border border-[#272738] text-slate-300 hover:bg-[#222232] text-xs font-medium flex flex-col items-center gap-1">
+              <span class="w-3.5 h-4.5 border border-slate-400 rounded-sm"></span>
+              <span>4 : 5</span>
+            </button>
+            <button class="ratio-btn p-2.5 rounded-lg bg-[#1a1a24] border border-[#272738] text-slate-300 hover:bg-[#222232] text-xs font-medium flex flex-col items-center gap-1">
+              <span class="w-3 h-5 border border-slate-400 rounded-sm"></span>
+              <span>9 : 16</span>
+            </button>
+          </div>
+
+          <div class="text-xs font-semibold text-slate-300 uppercase tracking-wider pt-2">Xoay & Lật ảnh</div>
+          <div class="grid grid-cols-3 gap-2">
+            <button id="rotate90Btn" class="py-2 px-3 rounded-lg bg-[#1a1a24] hover:bg-[#222232] border border-[#272738] text-slate-300 text-xs font-medium flex items-center justify-center gap-1.5 transition">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
+              <span>Xoay 90°</span>
+            </button>
+            <button id="flipHBtn" class="py-2 px-3 rounded-lg bg-[#1a1a24] hover:bg-[#222232] border border-[#272738] text-slate-300 text-xs font-medium flex items-center justify-center gap-1.5 transition">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 7 5 5-5 5V7Z"></path><path d="m21 7-5 5 5 5V7Z"></path><path d="M12 20v2"></path><path d="M12 14v2"></path><path d="M12 8v2"></path><path d="M12 2v2"></path></svg>
+              <span>Lật ngang</span>
+            </button>
+            <button id="flipVBtn" class="py-2 px-3 rounded-lg bg-[#1a1a24] hover:bg-[#222232] border border-[#272738] text-slate-300 text-xs font-medium flex items-center justify-center gap-1.5 transition">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 3 5 5 5-5H7Z"></path><path d="m7 21 5-5 5 5H7Z"></path><path d="M20 12h2"></path><path d="M14 12h2"></path><path d="M8 12h2"></path><path d="M2 12h2"></path></svg>
+              <span>Lật dọc</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- ================= TAB 2: CHỈNH MÀU (FR-03) ================= -->
+        <div id="tabContentAdjust" class="tab-content space-y-4">
+          <div class="flex items-center justify-between pb-1">
+            <span class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Thông số ánh sáng & màu</span>
+            <button id="resetAllAdjustBtn" class="text-[11px] text-slate-400 hover:text-indigo-400 transition">Đặt lại tất cả</button>
+          </div>
+
+          <!-- Slider 1: Độ sáng -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-300 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path>
+                </svg>
+                <span>Độ sáng</span>
+              </span>
+              <div class="flex items-center gap-1">
+                <span id="brightnessVal" class="font-mono text-slate-200 w-8 text-right font-medium">+15</span>
+                <button onclick="resetSlider('brightness', 0)" class="text-slate-500 hover:text-slate-300 p-0.5" title="Về mặc định">↺</button>
+              </div>
+            </div>
+            <input type="range" id="brightnessInput" min="-100" max="100" value="15" class="w-full">
+          </div>
+
+          <!-- Slider 2: Độ tương phản -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-300 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"></path>
+                </svg>
+                <span>Độ tương phản</span>
+              </span>
+              <div class="flex items-center gap-1">
+                <span id="contrastVal" class="font-mono text-slate-200 w-8 text-right font-medium">+20</span>
+                <button onclick="resetSlider('contrast', 0)" class="text-slate-500 hover:text-slate-300 p-0.5" title="Về mặc định">↺</button>
+              </div>
+            </div>
+            <input type="range" id="contrastInput" min="-100" max="100" value="20" class="w-full">
+          </div>
+
+          <!-- Slider 3: Độ bão hòa -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-300 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"></path>
+                </svg>
+                <span>Độ bão hòa</span>
+              </span>
+              <div class="flex items-center gap-1">
+                <span id="saturationVal" class="font-mono text-slate-200 w-8 text-right font-medium">-10</span>
+                <button onclick="resetSlider('saturation', 0)" class="text-slate-500 hover:text-slate-300 p-0.5" title="Về mặc định">↺</button>
+              </div>
+            </div>
+            <input type="range" id="saturationInput" min="-100" max="100" value="-10" class="w-full">
+          </div>
+
+          <!-- Slider 4: Nhiệt độ màu -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-300 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"></path>
+                </svg>
+                <span>Nhiệt độ màu</span>
+              </span>
+              <div class="flex items-center gap-1">
+                <span id="tempVal" class="font-mono text-slate-200 w-14 text-right font-medium">+8 (Ấm)</span>
+                <button onclick="resetSlider('temp', 0)" class="text-slate-500 hover:text-slate-300 p-0.5" title="Về mặc định">↺</button>
+              </div>
+            </div>
+            <input type="range" id="tempInput" min="-100" max="100" value="8" class="w-full">
+          </div>
+        </div>
+
+        <!-- ================= TAB 3: 4 PRESET MÀU (FR-04) ================= -->
+        <div id="tabContentPreset" class="tab-content hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Bộ lọc màu KulStu</span>
+            <button id="clearPresetBtn" class="text-[11px] text-slate-400 hover:text-rose-400 transition">Bỏ chọn preset</button>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <!-- Preset 1 -->
+            <div data-preset="natural" class="preset-card cursor-pointer p-2 rounded-xl bg-[#1a1a24] hover:bg-[#222232] border-2 border-indigo-500 transition group relative overflow-hidden">
+              <div class="h-16 rounded-lg bg-gradient-to-tr from-amber-200/40 via-rose-300/30 to-sky-300/40 mb-2 flex items-center justify-center">
+                <span class="text-xs font-bold text-white drop-shadow">Tự Nhiên</span>
+              </div>
+              <p class="text-[11px] text-slate-300 font-medium truncate">1. Tự nhiên</p>
+              <p class="text-[10px] text-slate-500 truncate">Sáng trong, tự nhiên</p>
+            </div>
+
+            <!-- Preset 2 -->
+            <div data-preset="fresh" class="preset-card cursor-pointer p-2 rounded-xl bg-[#1a1a24] hover:bg-[#222232] border-2 border-transparent transition group relative overflow-hidden">
+              <div class="h-16 rounded-lg bg-gradient-to-tr from-teal-300/40 via-cyan-400/30 to-blue-400/40 mb-2 flex items-center justify-center">
+                <span class="text-xs font-bold text-white drop-shadow">Trong Trẻo</span>
+              </div>
+              <p class="text-[11px] text-slate-300 font-medium truncate">2. Trong trẻo</p>
+              <p class="text-[10px] text-slate-500 truncate">Tone lạnh Hàn Quốc</p>
+            </div>
+
+            <!-- Preset 3 -->
+            <div data-preset="warm" class="preset-card cursor-pointer p-2 rounded-xl bg-[#1a1a24] hover:bg-[#222232] border-2 border-transparent transition group relative overflow-hidden">
+              <div class="h-16 rounded-lg bg-gradient-to-tr from-amber-400/40 via-orange-400/30 to-yellow-300/40 mb-2 flex items-center justify-center">
+                <span class="text-xs font-bold text-white drop-shadow">Tone Ấm</span>
+              </div>
+              <p class="text-[11px] text-slate-300 font-medium truncate">3. Nắng ấm</p>
+              <p class="text-[10px] text-slate-500 truncate">Hoàng hôn cổ điển</p>
+            </div>
+
+            <!-- Preset 4 -->
+            <div data-preset="film" class="preset-card cursor-pointer p-2 rounded-xl bg-[#1a1a24] hover:bg-[#222232] border-2 border-transparent transition group relative overflow-hidden">
+              <div class="h-16 rounded-lg bg-gradient-to-tr from-zinc-500/40 via-stone-400/30 to-neutral-600/40 mb-2 flex items-center justify-center">
+                <span class="text-xs font-bold text-white drop-shadow">Điện Ảnh</span>
+              </div>
+              <p class="text-[11px] text-slate-300 font-medium truncate">4. Điện ảnh</p>
+              <p class="text-[10px] text-slate-500 truncate">Trầm tĩnh, điện ảnh</p>
+            </div>
+          </div>
+
+          <!-- Slider cường độ Preset -->
+          <div class="space-y-1.5 pt-2 border-t border-[#232332]">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-300">Cường độ Preset</span>
+              <span id="presetIntensityVal" class="font-mono text-indigo-400 font-semibold">80%</span>
+            </div>
+            <input type="range" id="presetIntensityInput" min="0" max="100" value="80" class="w-full">
+          </div>
+        </div>
+
+        <!-- ================= TAB 4: MỊN DA AI (FR-09) ================= -->
+        <div id="tabContentBeauty" class="tab-content hidden space-y-4">
+          <!-- Trạng thái nhận diện mặt -->
+          <div class="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-3 flex items-start gap-2.5">
+            <div class="p-1.5 bg-cyan-500/20 rounded-lg text-cyan-400 shrink-0 mt-0.5">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="9" cy="10" r="1" fill="currentColor"></circle>
+                <circle cx="15" cy="10" r="1" fill="currentColor"></circle>
+                <path d="M8 15s1.5 2 4 2 4-2 4-2"></path>
+              </svg>
+            </div>
+            <div>
+              <p class="text-xs font-semibold text-cyan-300">Đã nhận diện 1 khuôn mặt</p>
+              <p class="text-[11px] text-slate-400 mt-0.5">Tự động giữ nét vùng mắt, mi, chân mày và tóc.</p>
+            </div>
+          </div>
+
+          <!-- Slider Mịn da -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-300 font-medium">Độ mịn da tự nhiên</span>
+              <span id="smoothVal" class="font-mono text-cyan-400 font-semibold">45%</span>
+            </div>
+            <input type="range" id="smoothInput" min="0" max="100" value="45" class="w-full">
+            <div class="flex justify-between text-[10px] text-slate-500 pt-1">
+              <span>0% (Nguyên bản)</span>
+              <span>50% (Khuyên dùng)</span>
+              <span>100% (Mịn sâu)</span>
+            </div>
+          </div>
+
+          <div class="p-3 bg-[#171722] rounded-xl border border-[#242436] space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-slate-300">Giữ kết cấu lỗ chân lông</span>
+              <input type="checkbox" checked class="w-4 h-4 accent-cyan-500 rounded">
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-slate-300">Khử bóng dầu vùng chữ T</span>
+              <input type="checkbox" checked class="w-4 h-4 accent-cyan-500 rounded">
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- FOOTER NHỎ Ở BẢNG ĐIỀU KHIỂN (Thông số tệp) -->
+      <div class="p-3 border-t border-[#20202e] bg-[#14141c] flex items-center justify-between text-[11px] text-slate-400 shrink-0">
+        <span id="resolutionBadge">1000 × 1500 px · sRGB</span>
+        <span class="text-indigo-400">JPEG 85%</span>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- MODAL XUẤT ẢNH (Gọn gàng, dễ hiểu cho người dùng) -->
+  <div id="exportModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-[#181824] border border-[#2c2c40] rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <svg class="w-4 h-4 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" x2="12" y1="15" y2="3"></line>
+          </svg>
+          Lưu ảnh về máy
+        </h3>
+        <button id="closeExportModal" class="text-slate-400 hover:text-white p-1">✕</button>
+      </div>
+
+      <!-- Định dạng -->
+      <div class="space-y-1.5">
+        <label class="text-xs font-semibold text-slate-300">Định dạng file</label>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="p-2.5 rounded-xl bg-[#20202e] border-2 border-indigo-500 flex items-center justify-between cursor-pointer">
+            <div>
+              <p class="text-xs font-bold text-white">JPEG</p>
+              <p class="text-[10px] text-slate-400">Nhẹ, chuẩn đăng MXH</p>
+            </div>
+            <input type="radio" name="format" value="jpeg" checked class="accent-indigo-500">
+          </label>
+          <label class="p-2.5 rounded-xl bg-[#20202e] border-2 border-transparent hover:border-[#383850] flex items-center justify-between cursor-pointer">
+            <div>
+              <p class="text-xs font-bold text-white">PNG</p>
+              <p class="text-[10px] text-slate-400">Chất lượng cao nhất</p>
+            </div>
+            <input type="radio" name="format" value="png" class="accent-indigo-500">
+          </label>
+        </div>
+      </div>
+
+      <!-- Kích cỡ xuất -->
+      <div class="space-y-1.5">
+        <label class="text-xs font-semibold text-slate-300">Kích thước</label>
+        <select id="exportSizeSelect" class="w-full bg-[#20202e] border border-[#323246] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+          <option value="original">Kích thước gốc (1000 × 1500 px)</option>
+          <option value="web">Cỡ tiêu chuẩn Web (1080p · Tối ưu mạng)</option>
+          <option value="compact">Cỡ nhỏ (720p · Tiết kiệm pin/máy yếu)</option>
+        </select>
+      </div>
+
+      <!-- Dự tính dung lượng -->
+      <div class="flex items-center justify-between text-xs text-slate-400 bg-[#12121a] px-3 py-2 rounded-lg">
+        <span>Ước tính dung lượng:</span>
+        <span class="font-mono text-emerald-400 font-semibold">~1.4 MB</span>
+      </div>
+
+      <!-- Nút hành động -->
+      <div class="flex gap-2 pt-2">
+        <button id="cancelExportBtn" class="flex-1 py-2 rounded-xl bg-[#232332] hover:bg-[#2b2b3e] text-xs font-medium text-slate-300 transition">Hủy</button>
+        <button id="confirmDownloadBtn" class="flex-1 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-xs font-semibold text-white shadow-lg shadow-indigo-600/30 transition">Tải ảnh ngay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST THÔNG BÁO (Gọn gàng, không dọa nạt người dùng) -->
+  <div id="toastMessage" class="fixed bottom-16 left-1/2 -translate-x-1/2 bg-[#1c1c2a] border border-[#2f2f45] text-white px-4 py-2 rounded-full shadow-2xl text-xs flex items-center gap-2 transition-all duration-200 opacity-0 pointer-events-none z-50">
+    <span id="toastIcon">✨</span>
+    <span id="toastText">Đã cập nhật hiệu ứng</span>
+  </div>
+
+  <!-- JAVASCRIPT ĐIỀU KHIỂN NỘI TẠI (Tương tác trực tiếp) -->
+  <script>
+    // State quản lý chỉnh sửa
+    const state = {
+      brightness: 15,
+      contrast: 20,
+      saturation: -10,
+      temp: 8,
+      preset: 'natural',
+      presetIntensity: 80,
+      smooth: 45,
+      zoom: 100,
+      isSplitActive: false,
+      step: 4,
+      maxSteps: 20
+    };
+
+    const editedImg = document.getElementById('editedImage');
+    const originalImg = document.getElementById('originalImage');
+    const compareOverlay = document.getElementById('compareOverlay');
+    const comparingBadge = document.getElementById('comparingBadge');
+    const holdBtn = document.getElementById('holdCompareBtn');
+    const toggleSplitBtn = document.getElementById('toggleSplitBtn');
+    const compareHandle = document.getElementById('compareHandle');
+    const toast = document.getElementById('toastMessage');
+
+    // Cập nhật bộ lọc CSS lên ảnh xem trước
+    function applyFilters() {
+      // Tính toán filter tổng hợp
+      const b = 100 + Number(state.brightness);
+      const c = 100 + Number(state.contrast);
+      const s = 100 + Number(state.saturation);
+      const blur = (Number(state.smooth) * 0.015).toFixed(2); // Giả lập mịn da
+      const sepia = state.temp > 0 ? (state.temp * 0.35) : 0;
+      const hue = state.temp < 0 ? (state.temp * 0.5) : 0;
+
+      editedImg.style.filter = `brightness(${b}%) contrast(${c}%) saturate(${s}%) sepia(${sepia}%) hue-rotate(${hue}deg) blur(${blur}px)`;
+    }
+
+    // Gắn sự kiện Slider Chỉnh màu
+    ['brightness', 'contrast', 'saturation', 'temp'].forEach(key => {
+      const input = document.getElementById(`${key}Input`);
+      const valDisplay = document.getElementById(`${key}Val`);
+      
+      input.addEventListener('input', (e) => {
+        state[key] = e.target.value;
+        valDisplay.textContent = (state[key] > 0 ? `+${state[key]}` : state[key]) + (key === 'temp' ? (state[key] >= 0 ? ' (Ấm)' : ' (Lạnh)') : '');
+        applyFilters();
+      });
+    });
+
+    // Reset slider
+    window.resetSlider = function(key, defaultVal) {
+      state[key] = defaultVal;
+      document.getElementById(`${key}Input`).value = defaultVal;
+      document.getElementById(`${key}Val`).textContent = defaultVal > 0 ? `+${defaultVal}` : defaultVal;
+      applyFilters();
+      showToast(`Đã đưa ${key} về mặc định`);
+    };
+
+    // Slider Mịn da AI
+    const smoothInput = document.getElementById('smoothInput');
+    const smoothVal = document.getElementById('smoothVal');
+    smoothInput.addEventListener('input', (e) => {
+      state.smooth = e.target.value;
+      smoothVal.textContent = `${state.smooth}%`;
+      applyFilters();
+    });
+
+    // Preset cards
+    document.querySelectorAll('.preset-card').forEach(card => {
+      card.addEventListener('click', () => {
+        document.querySelectorAll('.preset-card').forEach(c => c.classList.replace('border-indigo-500', 'border-transparent'));
+        card.classList.replace('border-transparent', 'border-indigo-500');
+        state.preset = card.dataset.preset;
+        showToast(`Đã áp dụng Preset: ${card.querySelector('p').textContent}`);
+      });
+    });
+
+    // Chuyển Tab
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => {
+          b.classList.remove('active', 'bg-indigo-600/20', 'text-indigo-400', 'border-indigo-500/30', 'text-white', 'font-semibold');
+          b.classList.add('text-slate-400', 'font-medium');
+        });
+        btn.classList.add('active', 'bg-indigo-600/20', 'text-indigo-400', 'border-indigo-500/30', 'text-white', 'font-semibold');
+        btn.classList.remove('text-slate-400', 'font-medium');
+
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+        const target = btn.dataset.tab;
+        if (target === 'crop') document.getElementById('tabContentCrop').classList.remove('hidden');
+        if (target === 'adjust') document.getElementById('tabContentAdjust').classList.remove('hidden');
+        if (target === 'preset') document.getElementById('tabContentPreset').classList.remove('hidden');
+        if (target === 'beauty') document.getElementById('tabContentBeauty').classList.remove('hidden');
+      });
+    });
+
+    // So sánh trước/sau: Nhấn giữ xem ảnh gốc
+    function startCompare() {
+      editedImg.style.opacity = '0';
+      comparingBadge.classList.remove('hidden');
+    }
+    function endCompare() {
+      editedImg.style.opacity = '1';
+      comparingBadge.classList.add('hidden');
+    }
+    holdBtn.addEventListener('mousedown', startCompare);
+    holdBtn.addEventListener('mouseup', endCompare);
+    holdBtn.addEventListener('mouseleave', endCompare);
+    holdBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startCompare(); });
+    holdBtn.addEventListener('touchend', endCompare);
+
+    // Bật/Tắt chế độ chia đôi Before/After
+    toggleSplitBtn.addEventListener('click', () => {
+      state.isSplitActive = !state.isSplitActive;
+      if (state.isSplitActive) {
+        compareOverlay.classList.remove('hidden');
+        toggleSplitBtn.classList.add('bg-indigo-600', 'text-white');
+        showToast("Đã bật chế độ kéo chia đôi Trước/Sau");
+      } else {
+        compareOverlay.classList.add('hidden');
+        toggleSplitBtn.classList.remove('bg-indigo-600', 'text-white');
+      }
+    });
+
+    // Kéo thanh chia đôi Trước/Sau
+    let isDraggingSplit = false;
+    const stage = document.getElementById('imageStage');
+
+    compareHandle.addEventListener('mousedown', () => isDraggingSplit = true);
+    window.addEventListener('mouseup', () => isDraggingSplit = false);
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingSplit || !state.isSplitActive) return;
+      const rect = stage.getBoundingClientRect();
+      const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+      const percentage = (x / rect.width) * 100;
+      compareOverlay.style.width = `${percentage}%`;
+    });
+
+    // Zoom điều khiển
+    const zoomText = document.getElementById('zoomLevelText');
+    const viewport = document.getElementById('canvasViewport');
+    document.getElementById('zoomInBtn').addEventListener('click', () => {
+      if (state.zoom < 250) state.zoom += 25;
+      zoomText.textContent = `${state.zoom}%`;
+      viewport.style.transform = `scale(${state.zoom / 100})`;
+    });
+    document.getElementById('zoomOutBtn').addEventListener('click', () => {
+      if (state.zoom > 50) state.zoom -= 25;
+      zoomText.textContent = `${state.zoom}%`;
+      viewport.style.transform = `scale(${state.zoom / 100})`;
+    });
+    document.getElementById('zoomResetBtn').addEventListener('click', () => {
+      state.zoom = 100;
+      zoomText.textContent = `100%`;
+      viewport.style.transform = `scale(1)`;
+    });
+
+    // Tải ảnh người dùng
+    document.getElementById('imageUploader').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const url = URL.createObjectURL(file);
+        editedImg.src = url;
+        originalImg.src = url;
+        showToast("Đã tải ảnh của bạn vào KulStu");
+      }
+    });
+
+    // Chuyển đổi giao diện Desktop / Mobile để test layout
+    let isMobileView = false;
+    const viewToggleBtn = document.getElementById('viewToggleBtn');
+    const deviceLabel = document.getElementById('deviceLabel');
+    const appLayout = document.getElementById('appLayout');
+    const inspector = document.getElementById('inspectorPanel');
+
+    viewToggleBtn.addEventListener('click', () => {
+      isMobileView = !isMobileView;
+      if (isMobileView) {
+        deviceLabel.textContent = "Chế độ: Mobile";
+        appLayout.classList.add('max-w-md', 'mx-auto', 'border-x', 'border-[#29293d]', 'shadow-2xl');
+        showToast("Đã chuyển sang khung nhìn điện thoại");
+      } else {
+        deviceLabel.textContent = "Chế độ: Desktop";
+        appLayout.classList.remove('max-w-md', 'mx-auto', 'border-x', 'border-[#29293d]', 'shadow-2xl');
+        showToast("Đã chuyển sang khung nhìn Desktop");
+      }
+    });
+
+    // Modal Xuất ảnh
+    const exportModal = document.getElementById('exportModal');
+    document.getElementById('exportModalBtn').addEventListener('click', () => exportModal.classList.remove('hidden'));
+    document.getElementById('closeExportModal').addEventListener('click', () => exportModal.classList.add('hidden'));
+    document.getElementById('cancelExportBtn').addEventListener('click', () => exportModal.classList.add('hidden'));
+    document.getElementById('confirmDownloadBtn').addEventListener('click', () => {
+      exportModal.classList.add('hidden');
+      showToast("🎉 Đang xuất và tải ảnh chất lượng cao về máy!");
+    });
+
+    // Toast helper
+    function showToast(msg) {
+      document.getElementById('toastText').textContent = msg;
+      toast.classList.remove('opacity-0', 'pointer-events-none');
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'pointer-events-none');
+      }, 2500);
+    }
+
+    // Khởi tạo
+    applyFilters();
+  </script>
+</body>
+</html>
