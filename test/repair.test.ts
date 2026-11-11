@@ -20,7 +20,7 @@ class FakeWorker {
 }
 ;(globalThis as Record<string, unknown>).Worker = FakeWorker
 
-const { DEFAULT_MODEL_URL, drawRepairs, infer, repairMessages, repairRegion, repairWindow, resolveModelUrl, RUN_TIMEOUT, STALL_TIMEOUT } =
+const { drawRepairs, infer, repairMessages, repairRegion, repairWindow, resolveModelUrl, RUN_TIMEOUT, STALL_TIMEOUT } =
   await import('../src/services/repair.ts')
 
 const SIDE = 512
@@ -35,15 +35,13 @@ beforeEach(() => { created = 0; terminated = 0 })
 afterEach(() => { mock.timers.reset() })
 
 describe('resolveModelUrl', () => {
-  test('LỖI ĐÃ GẶP KHI DEPLOY: bản build không được trỏ vào /models trên máy chủ (tệp 88 MiB không được deploy)', () => {
-    const url = resolveModelUrl({ DEV: false, BASE_URL: '/' })
-    assert.equal(url, DEFAULT_MODEL_URL)
-    assert.ok(url.startsWith('https://'), 'bản build phải dùng URL tuyệt đối tới nơi có model')
+  test('LỖI ĐÃ GẶP KHI DEPLOY: mặc định dùng bản chia phần do chính web phục vụ (cùng tên miền, không cần CORS)', () => {
+    assert.equal(resolveModelUrl({ BASE_URL: '/' }), '/models/lama/manifest.json')
+    assert.equal(resolveModelUrl({ BASE_URL: '/app/' }), '/app/models/lama/manifest.json')
   })
-  test('dev dùng bản trong public/models; biến môi trường thắng; "off" tắt tính năng', () => {
-    assert.equal(resolveModelUrl({ DEV: true, BASE_URL: '/app/' }), '/app/models/inpainting_lama.onnx')
-    assert.equal(resolveModelUrl({ DEV: false, VITE_REPAIR_MODEL_URL: ' https://r2.test/m.onnx ' }), 'https://r2.test/m.onnx')
-    assert.equal(resolveModelUrl({ DEV: false, VITE_REPAIR_MODEL_URL: 'off' }), '')
+  test('biến môi trường thắng; "off" tắt tính năng', () => {
+    assert.equal(resolveModelUrl({ VITE_REPAIR_MODEL_URL: ' https://r2.test/m.onnx ' }), 'https://r2.test/m.onnx')
+    assert.equal(resolveModelUrl({ VITE_REPAIR_MODEL_URL: 'off' }), '')
   })
 })
 
@@ -90,7 +88,7 @@ describe('infer', () => {
     let sent: RepairRequest | undefined
     behave = (req, reply) => { sent = req; reply({ type: 'done', pixels: req.rgba }) }
     await infer(blank(), blank())
-    assert.equal(sent?.model.url, DEFAULT_MODEL_URL)
+    assert.equal(sent?.model.url, 'https://kulstu.test/models/lama/manifest.json')
     assert.match(sent?.model.sha256 ?? '', /^[0-9a-f]{64}$/)
   })
 

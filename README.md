@@ -46,11 +46,10 @@ Khi phát triển, mở `/#demo` (hoặc `/#demo-crop`, `/#demo-preset`, `/#demo
 
 Model nhận diện khuôn mặt, dáng người và tách nền nằm sẵn trong `public/models/`.
 
-Xoá vật thể dùng model LaMa của OpenCV Zoo (`inpainting_lama_2025jan.onnx`, ~88 MB, Apache-2.0). Tệp này **không có trong repo** và không được đưa vào bản build, vì Cloudflare giới hạn 25 MiB mỗi tệp:
+Xoá vật thể dùng model LaMa của OpenCV Zoo (`inpainting_lama_2025jan.onnx`, ~88 MB, Apache-2.0). Cloudflare giới hạn 25 MiB mỗi tệp, nên model được chia thành 4 phần trong `public/models/lama/` kèm `manifest.json`. Web tự phục vụ các phần này (cùng tên miền, không cần CORS); trình duyệt tải lần lượt, ghép lại, kiểm tra SHA-256 rồi lưu vào Cache Storage để lần sau không phải tải lại.
 
-- **Bản build** mặc định tải model thẳng từ Hugging Face (URL ghim theo commit, xem `DEFAULT_MODEL_URL` trong `src/services/repair.ts`). Trình duyệt kiểm tra SHA-256 rồi lưu vào Cache Storage, nên lần sau không phải tải lại.
-- **Tự host model**: tải tệp lên nơi phục vụ HTTPS có CORS (ví dụ Cloudflare R2), rồi đặt `VITE_REPAIR_MODEL_URL` thành URL đó **trước khi build**. Đặt `VITE_REPAIR_MODEL_URL=off` để tắt tính năng.
-- **Khi chạy dev**: đặt tệp vào `public/models/inpainting_lama.onnx`.
+- **Đổi model**: đặt tệp vào `public/models/inpainting_lama.onnx` (không đưa lên git) rồi chạy `node scripts/split-model.mjs`.
+- **Host ở nơi khác**: đặt `VITE_REPAIR_MODEL_URL` (tệp `.onnx` hoặc `manifest.json`, máy chủ phải có CORS) **trước khi build**. Đặt `off` để tắt tính năng.
 
 `public/_headers` bật COOP/COEP để trình duyệt hỗ trợ (Chrome, Edge, Firefox) chạy model nhiều luồng; Safari tự chạy một luồng.
 

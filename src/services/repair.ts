@@ -5,18 +5,15 @@ import type { ModelSpec } from './modelLoader'
 import type { RepairReply } from './repair.worker'
 
 const SIDE = LAMA_SIDE
-/** Bản OpenCV Zoo trên Hugging Face, ghim theo commit để tệp không đổi. Có CORS nên tải thẳng từ trình duyệt được. */
-export const DEFAULT_MODEL_URL =
-  'https://huggingface.co/opencv/inpainting_lama/resolve/aee6d22f0a13e5e35af1c9a1c3afd62841fc6f3f/inpainting_lama_2025jan.onnx'
-
 /**
- * Nguồn model: VITE_REPAIR_MODEL_URL nếu có ('off' để tắt tính năng); khi chạy dev dùng bản trong public/models;
- * bản build dùng Hugging Face, vì tệp 88 MiB vượt giới hạn 25 MiB mỗi tệp của Cloudflare.
+ * Nguồn model: VITE_REPAIR_MODEL_URL nếu có (tệp .onnx hoặc manifest .json có CORS; 'off' để tắt tính năng);
+ * mặc định là bản chia phần do chính web phục vụ (public/models/lama, tạo bằng scripts/split-model.mjs),
+ * vì tệp 88 MiB vượt giới hạn 25 MiB mỗi tệp của Cloudflare và Hugging Face không cho tải thẳng (thiếu CORS).
  */
-export function resolveModelUrl(env: { VITE_REPAIR_MODEL_URL?: string; DEV?: boolean; BASE_URL?: string }) {
+export function resolveModelUrl(env: { VITE_REPAIR_MODEL_URL?: string; BASE_URL?: string }) {
   const custom = env.VITE_REPAIR_MODEL_URL?.trim()
   if (custom) return /^(off|false|0)$/i.test(custom) ? '' : custom
-  return env.DEV ? `${env.BASE_URL ?? '/'}models/inpainting_lama.onnx` : DEFAULT_MODEL_URL
+  return `${env.BASE_URL ?? '/'}models/lama/manifest.json`
 }
 
 const modelUrl = resolveModelUrl(import.meta.env)
