@@ -32,7 +32,8 @@ export const repairMessages: Record<Extract<RepairReply, { type: 'error' }>['cod
   run: 'AI chưa xử lý được vùng này. Hãy thử lại.',
   timeout: 'AI đã quá thời gian xử lý. Hãy thử một vùng nhỏ hơn.',
   stall: 'Tải model AI bị gián đoạn. Kiểm tra kết nối mạng rồi thử lại.',
-  worker: 'Không khởi động được AI trên trình duyệt này.',
+  // thường gặp nhất khi tab mở từ trước lần deploy mới: tệp worker cũ đã bị thay
+  worker: 'Không khởi động được AI. Web có thể vừa được cập nhật, hãy tải lại trang rồi thử lại.',
 }
 
 let worker: Worker | null = null
