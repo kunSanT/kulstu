@@ -313,7 +313,7 @@ export function HealPanel() {
       ) : (
         <>
           <p className="note">
-            Tô kín vật thể cần xoá. Lần đầu tải model khoảng 88 MiB, các lần sau dùng bản đã lưu.
+            Tô kín vật thể cần xoá. Lần đầu tải model khoảng 30 MB, các lần sau dùng bản đã lưu.
           </p>
           <Band label="Cỡ cọ" value={eraseSize} min={1} max={100} noReset disabled={processing} onLive={setEraseSize} onCommit={() => {}} />
           <div className="chips" role="group" aria-label="Vùng tô AI">

@@ -27,8 +27,8 @@ dist-pages
 # sinh ra bởi scripts/copy-wasm.mjs
 public/mediapipe
 
-# model LaMa quá lớn cho git, xem README
-public/models/inpainting_lama.onnx
+# model nguyên khối không đưa lên git; app dùng bản chia phần (xem README)
+public/models/*.onnx
 
 # ảnh chụp kiểm thử và thư mục tạm
 .shots
