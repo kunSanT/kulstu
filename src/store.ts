@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { applyErases, MAX_ERASES, type Erase } from './engine/erase'
 import { applySpots } from './engine/heal'
 import { drawRepairs, repairRegion } from './services/repair'
+import { detectPlatform, saveImage, savedMessage, type SaveResult } from './services/save'
 import type { Push } from './engine/liquify'
 import { freshRecipe, MAX_PUSHES, MAX_SPOTS, requiresFace, usesBody, usesFace, usesHair, usesPersonMask, type AdjKey, type Body, type Features, type Recipe, type Spot } from './engine/recipe'
 import { detectBody } from './services/pose'
@@ -467,6 +468,27 @@ export function addPush(p: Push): boolean {
 
 /* ---------- xuất ảnh ---------- */
 
+/**
+ * Đưa ảnh đã xuất tới người dùng: máy tính tải xuống, điện thoại lưu vào thư viện ảnh.
+ * Nếu trình duyệt đòi chạm thêm (bảng Chia sẻ trên iPhone), hiện nút trong thông báo để chạm.
+ */
+export async function deliverImage(blob: Blob, fileName: string) {
+  const platform = detectPlatform()
+  const report = (result: SaveResult) => {
+    const msg = savedMessage(result, platform)
+    if (msg) toast(msg)
+  }
+  const result = await saveImage(blob, fileName, { platform })
+  if (result === 'needs-tap') {
+    toast('Ảnh đã sẵn sàng.', {
+      sticky: true,
+      action: { label: 'Lưu vào thư viện ảnh', run: () => void saveImage(blob, fileName, { platform, retry: true }).then(report) },
+    })
+    return
+  }
+  report(result)
+}
+
 export async function runExport(fmt: ExportFormat, scale: number, quality = .95): Promise<boolean> {
   const { src, hist, hi } = state
   if (!src || state.exporting) return false
@@ -496,12 +518,7 @@ export async function runExport(fmt: ExportFormat, scale: number, quality = .95)
     }
     const blob = await exportImage(src, recipe, state.face.mask, state.face.features, state.body.data, fmt, scale,
       state.cutout.result?.mask ?? null, state.hairRegion.result, quality)
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `${src.name}-kulstu.${fmt === 'png' ? 'png' : 'jpg'}`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000)
-    toast('Đã tải ảnh xuống.')
+    await deliverImage(blob, `${src.name}-kulstu.${fmt === 'png' ? 'png' : 'jpg'}`)
     return true
   } catch {
     toast('Chưa xuất được ảnh ở kích thước này. Phiên chỉnh vẫn được giữ nguyên.', {
