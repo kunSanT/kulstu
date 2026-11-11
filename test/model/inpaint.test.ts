@@ -1,18 +1,18 @@
-// Chạy model thật (chậm ~1 phút). Bỏ qua nếu không có public/models/inpainting_lama.onnx.
+// Chạy model thật. Bỏ qua nếu không có public/models/migan.onnx.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { LAMA_BYTES, LAMA_SHA256, LAMA_SIDE, looksLikeOnnx, packInput, unpackOutput } from '../../src/engine/lama.ts'
+import { INPAINT_SIDE, looksLikeOnnx, MODEL_BYTES, MODEL_SHA256, packInput, unpackOutput } from '../../src/engine/inpaint.ts'
 
-const path = fileURLToPath(new URL('../../public/models/inpainting_lama.onnx', import.meta.url))
-const skip = !existsSync(path) && 'không có public/models/inpainting_lama.onnx'
+const path = fileURLToPath(new URL('../../public/models/migan.onnx', import.meta.url))
+const skip = !existsSync(path) && 'không có public/models/migan.onnx'
 
 test('model thật: đúng tệp, lấp lỗ giữa nền cam bằng màu cam', { skip, timeout: 240_000 }, async () => {
   const bytes = readFileSync(path)
-  assert.equal(bytes.length, LAMA_BYTES)
-  assert.equal(createHash('sha256').update(bytes).digest('hex'), LAMA_SHA256)
+  assert.equal(bytes.length, MODEL_BYTES)
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), MODEL_SHA256)
   assert.ok(looksLikeOnnx(bytes))
 
   const ort = await import('onnxruntime-web/wasm')
@@ -20,8 +20,9 @@ test('model thật: đúng tệp, lấp lỗ giữa nền cam bằng màu cam', 
   ort.env.logLevel = 'error'
   const session = await ort.InferenceSession.create(bytes, { logSeverityLevel: 3 })
   assert.deepEqual(session.inputNames, ['image', 'mask'])
+  const t0 = Date.now()
 
-  const side = LAMA_SIDE
+  const side = INPAINT_SIDE
   const rgba = new Uint8ClampedArray(side * side * 4)
   const mask = new Uint8ClampedArray(side * side * 4)
   const hole = (x: number, y: number) => x >= 200 && x < 312 && y >= 200 && y < 312
@@ -30,25 +31,26 @@ test('model thật: đúng tệp, lấp lỗ giữa nền cam bằng màu cam', 
     rgba.set(hole(x, y) ? [20, 20, 20, 255] : [230, 120, 30, 255], i) // vật thể đen trên nền cam
     if (hole(x, y)) mask[i + 3] = 255
   }
-  const { image, holes } = packInput(rgba, mask)
+  const { image, keep } = packInput(rgba, mask)
   const out = await session.run({
-    image: new ort.Tensor('float32', image, [1, 3, side, side]),
-    mask: new ort.Tensor('float32', holes, [1, 1, side, side]),
+    image: new ort.Tensor('uint8', image, [1, 3, side, side]),
+    mask: new ort.Tensor('uint8', keep, [1, 1, side, side]),
   })
-  const pixels = unpackOutput(out[session.outputNames[0]].data as Float32Array, rgba)
+  const pixels = unpackOutput(out[session.outputNames[0]].data as Uint8Array, rgba)
   const at = (x: number, y: number) => [...pixels.subarray((y * side + x) * 4, (y * side + x) * 4 + 3)]
   const [r, g, b] = at(256, 256)
   assert.ok(Math.abs(r - 230) < 40 && Math.abs(g - 120) < 40 && Math.abs(b - 30) < 40, `tâm lỗ phải gần màu cam, nhận ${r},${g},${b}`)
+  console.log(`một lần chạy: ${Date.now() - t0} ms`)
   const [r2, , b2] = at(20, 20)
   assert.ok(r2 > 180 && b2 < 80, 'ngoài lỗ giữ màu cam (kênh màu không bị đảo)')
 })
 
-test('model thật: xoá vật có bóng mờ trên nền nhiễu hạt — cách mới gần nền gốc hơn hẳn cách cũ', { skip, timeout: 300_000 }, async () => {
-  const { composeFill, distanceToMask, holeMask } = await import('../../src/engine/lama.ts')
+test('model thật: xoá vật có bóng mờ trên nền nhiễu hạt — ghép mới gần nền gốc hơn hẳn ghép cũ', { skip, timeout: 300_000 }, async () => {
+  const { composeFill, distanceToMask, holeMask } = await import('../../src/engine/inpaint.ts')
   const ort = await import('onnxruntime-web/wasm')
   ort.env.wasm.numThreads = 1
   const session = await ort.InferenceSession.create(readFileSync(path), { logSeverityLevel: 3 })
-  const side = LAMA_SIDE
+  const side = INPAINT_SIDE
   const c = 256
 
   // nền giống ảnh chụp: chuyển sắc + hạt nhiễu cố định
@@ -71,12 +73,12 @@ test('model thật: xoá vật có bóng mờ trên nền nhiễu hạt — các
   for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) if (Math.hypot(x - c, y - c) <= 25) stroke[(y * side + x) * 4 + 3] = 255
 
   const run = async (mask: Uint8ClampedArray) => {
-    const { image, holes } = packInput(photo, mask)
+    const { image, keep } = packInput(photo, mask)
     const out = await session.run({
-      image: new ort.Tensor('float32', image, [1, 3, side, side]),
-      mask: new ort.Tensor('float32', holes, [1, 1, side, side]),
+      image: new ort.Tensor('uint8', image, [1, 3, side, side]),
+      mask: new ort.Tensor('uint8', keep, [1, 1, side, side]),
     })
-    return unpackOutput(out[session.outputNames[0]].data as Float32Array, new Uint8ClampedArray(side * side * 4))
+    return unpackOutput(out[session.outputNames[0]].data as Uint8Array, new Uint8ClampedArray(side * side * 4))
   }
   const blend = (fill: Uint8ClampedArray) => {
     const result = photo.slice()

@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { composeFill, DILATE, distanceToMask, FEATHER, holeMask, looksLikeOnnx, packInput, unpackOutput } from '../src/engine/lama.ts'
+import { composeFill, DILATE, distanceToMask, FEATHER, holeMask, looksLikeOnnx, packInput, unpackOutput } from '../src/engine/inpaint.ts'
 
 const side = 4
 const area = side * side
@@ -11,38 +11,31 @@ const rgbaOf = (fn: (i: number) => [number, number, number, number]) => {
 }
 
 describe('packInput / unpackOutput', () => {
-  test('đóng gói BGR 0–1 theo kênh và mặt nạ 0/1 theo ngưỡng alpha', () => {
+  test('đóng gói RGB uint8 theo kênh; mặt nạ: 0 = cần lấp, 255 = giữ (quy ước của MI-GAN)', () => {
     const rgba = rgbaOf(() => [255, 51, 0, 255])
     const mask = rgbaOf((i) => [0, 0, 0, i === 0 ? 33 : i === 1 ? 32 : 0])
-    const { image, holes } = packInput(rgba, mask, side)
-    assert.equal(image[0], 0)
-    assert.equal(image[area], Math.fround(51 / 255))
-    assert.equal(image[area * 2], 1)
-    assert.deepEqual([holes[0], holes[1], holes[2]], [1, 0, 0])
+    const { image, keep } = packInput(rgba, mask, side)
+    assert.ok(image instanceof Uint8Array && keep instanceof Uint8Array)
+    assert.deepEqual([image[0], image[area], image[area * 2]], [255, 51, 0])
+    assert.deepEqual([keep[0], keep[1], keep[2]], [0, 255, 255])
   })
 
   test('sai kích thước thì báo lỗi rõ ràng', () => {
     assert.throws(() => packInput(new Uint8ClampedArray(8), new Uint8ClampedArray(8), side), /4×4/)
   })
 
-  test('giải nén BGR 0–255 về RGBA, kẹp giá trị, NaN thành 0, alpha 255', () => {
-    const result = new Float32Array(area * 3)
-    result[0] = 300 // B
-    result[area] = NaN // G
-    result[area * 2] = -5 // R
-    const out = unpackOutput(result, new Uint8ClampedArray(area * 4), side)
-    assert.deepEqual([...out.subarray(0, 4)], [0, 0, 255, 255])
-  })
-
-  test('đóng gói rồi giải nén (model "đồng nhất" ×255) ra lại đúng ảnh', () => {
-    const rgba = rgbaOf((i) => [i * 3, 255 - i * 5, i * 7, 255])
+  test('đóng gói rồi giải nén ra lại đúng ảnh, alpha 255', () => {
+    const rgba = rgbaOf((i) => [i * 3, 255 - i * 5, i * 7, 200])
     const { image } = packInput(rgba, new Uint8ClampedArray(area * 4), side)
-    const out = unpackOutput(image.map((v) => v * 255), new Uint8ClampedArray(area * 4), side)
-    for (let i = 0; i < area * 4; i++) assert.ok(Math.abs(out[i] - rgba[i]) <= 1, `pixel ${i}`)
+    const out = unpackOutput(image, new Uint8ClampedArray(area * 4), side)
+    for (let i = 0; i < area; i++) {
+      assert.deepEqual([...out.subarray(i * 4, i * 4 + 3)], [...rgba.subarray(i * 4, i * 4 + 3)])
+      assert.equal(out[i * 4 + 3], 255)
+    }
   })
 
   test('model trả sai số phần tử thì báo lỗi', () => {
-    assert.throws(() => unpackOutput(new Float32Array(3), new Uint8ClampedArray(area * 4), side), /cần 48/)
+    assert.throws(() => unpackOutput(new Uint8Array(3), new Uint8ClampedArray(area * 4), side), /cần 48/)
   })
 })
 
@@ -129,7 +122,7 @@ describe('composeFill', () => {
   })
 
   test('hạt nhiễu: nền có nhiễu, model trả phần lấp mịn → thêm nhiễu cùng cỡ', () => {
-    const input = noisy([128, 128, 128], 8)
+    const input = noisy([128, 128, 128], 3)
     const d = distanceToMask(strokeMask(), S)
     const out = composeFill(input, flat([128, 128, 128]), d, S, 3)
     const fill = stats(out, inside)
@@ -142,9 +135,29 @@ describe('composeFill', () => {
     const d = distanceToMask(strokeMask(), S)
     const smooth = composeFill(flat([90, 90, 90]), flat([90, 90, 90]), d, S)
     assert.equal(stats(smooth, inside).std, 0)
-    const input = noisy([128, 128, 128], 8)
-    const already = composeFill(input, noisy([128, 128, 128], 8, 99), d, S)
-    assert.ok(stats(already, inside).std < 8 * 1.3)
+    const input = noisy([128, 128, 128], 4)
+    const already = composeFill(input, noisy([128, 128, 128], 4, 99), d, S)
+    assert.ok(stats(already, inside).std < 4 * 1.3)
+  })
+
+  test('LỖI THẤY TRÊN ẢNH THẬT: nền nhiều mép sắc (lá cây, vạch đường) nhưng không nhiễu → không thêm lốm đốm', () => {
+    const stripes = new Uint8ClampedArray(S * S * 4)
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const v = (x >> 2) % 2 ? 200 : 60 // sọc 4 px, mép rất sắc
+      stripes.set([v, v, v, 255], (y * S + x) * 4)
+    }
+    const d = distanceToMask(strokeMask(), S)
+    const out = composeFill(stripes, flat([130, 130, 130]), d, S)
+    // phần lấp: model trả phẳng, sau cân màu vẫn phải mượt, không bị rắc hạt
+    let maxJump = 0
+    for (let x = c - 6; x < c + 6; x++) maxJump = Math.max(maxJump, Math.abs(out[(c * S + x + 1) * 4 + 1] - out[(c * S + x) * 4 + 1]))
+    assert.ok(maxJump < 20, `phần lấp bị rắc hạt: chênh ${maxJump} giữa hai điểm liền nhau`)
+  })
+
+  test('nhiễu rất mạnh vẫn chỉ thêm tối đa MAX_GRAIN', () => {
+    const d = distanceToMask(strokeMask(), S)
+    const out = composeFill(noisy([128, 128, 128], 20), flat([128, 128, 128]), d, S)
+    assert.ok(stats(out, inside).std < 4 * 1.3)
   })
 
   test('cùng nét tô cho cùng kết quả (dựng lại bản nháp không đổi ảnh)', () => {

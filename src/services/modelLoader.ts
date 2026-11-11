@@ -1,6 +1,6 @@
 // Tải model AI: kiểm tra đúng tệp (không phải trang HTML do máy chủ trả nhầm), báo tiến độ,
 // đối chiếu SHA-256 và lưu vào Cache Storage để lần sau không phải tải lại 88 MiB.
-import { looksLikeOnnx } from '../engine/lama'
+import { looksLikeOnnx } from '../engine/inpaint'
 
 export type ModelErrorCode = 'missing' | 'network' | 'corrupt'
 export class ModelError extends Error {

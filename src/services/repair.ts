@@ -1,19 +1,19 @@
 import type { Erase } from '../engine/erase'
-import { composeFill, distanceToMask, holeMask, LAMA_SHA256, LAMA_SIDE } from '../engine/lama'
+import { composeFill, distanceToMask, holeMask, INPAINT_SIDE, MODEL_SHA256 } from '../engine/inpaint'
 import type { RepairPatch } from '../engine/recipe'
 import type { ModelSpec } from './modelLoader'
 import type { RepairReply } from './repair.worker'
 
-const SIDE = LAMA_SIDE
+const SIDE = INPAINT_SIDE
 /**
  * Nguồn model: VITE_REPAIR_MODEL_URL nếu có (tệp .onnx hoặc manifest .json có CORS; 'off' để tắt tính năng);
- * mặc định là bản chia phần do chính web phục vụ (public/models/lama, tạo bằng scripts/split-model.mjs),
- * vì tệp 88 MiB vượt giới hạn 25 MiB mỗi tệp của Cloudflare và Hugging Face không cho tải thẳng (thiếu CORS).
+ * mặc định là bản chia phần do chính web phục vụ (public/models/migan, tạo bằng scripts/split-model.mjs),
+ * vì tệp 29,5 MB vượt giới hạn 25 MiB mỗi tệp của Cloudflare và Hugging Face không cho tải thẳng (thiếu CORS).
  */
 export function resolveModelUrl(env: { VITE_REPAIR_MODEL_URL?: string; BASE_URL?: string }) {
   const custom = env.VITE_REPAIR_MODEL_URL?.trim()
   if (custom) return /^(off|false|0)$/i.test(custom) ? '' : custom
-  return `${env.BASE_URL ?? '/'}models/lama/manifest.json`
+  return `${env.BASE_URL ?? '/'}models/migan/manifest.json`
 }
 
 const modelUrl = resolveModelUrl(import.meta.env)
@@ -59,7 +59,7 @@ export async function drawRepairs(canvas: HTMLCanvasElement, patches: RepairPatc
 export type RepairProgress = { phase: 'download'; loaded: number; total: number } | { phase: 'running' }
 
 export function infer(rgba: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedArray<ArrayBuffer>,
-  onProgress: (progress: RepairProgress) => void = () => {}, model: ModelSpec = { url: new URL(modelUrl, location.href).href, sha256: LAMA_SHA256 }) {
+  onProgress: (progress: RepairProgress) => void = () => {}, model: ModelSpec = { url: new URL(modelUrl, location.href).href, sha256: MODEL_SHA256 }) {
   const job = worker ??= createWorker()
   return new Promise<Uint8ClampedArray<ArrayBuffer>>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined

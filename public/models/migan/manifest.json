@@ -1,0 +1,17 @@
+{
+  "name": "migan.onnx",
+  "bytes": 29546882,
+  "sha256": "593eba0b7e04730f1b61c0a3cbca68d97d8d6a7ff5c6a44a7b9d7fcd880fc5ae",
+  "parts": [
+    {
+      "file": "part0.bin",
+      "bytes": 25165824,
+      "sha256": "e54448727948f48d5bfff38aeddc9f43335799dd300825bee89e5adc1082a3f1"
+    },
+    {
+      "file": "part1.bin",
+      "bytes": 4381058,
+      "sha256": "b607c12729955c3860b868e59a96e7bd7d9adfdf8c20b5bf42e80d3c29355d38"
+    }
+  ]
+}

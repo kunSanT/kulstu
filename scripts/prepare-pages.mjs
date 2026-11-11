@@ -2,7 +2,7 @@ import { readdir, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 const output = new URL('../dist-pages/', import.meta.url)
-await rm(new URL('models/inpainting_lama.onnx', output), { force: true })
+// tệp .onnx nguyên khối đã được plugin trong vite.config.ts bỏ khỏi bản build
 
 const entries = await readdir(output, { recursive: true, withFileTypes: true })
 const { stat } = await import('node:fs/promises')

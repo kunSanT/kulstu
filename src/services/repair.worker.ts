@@ -1,7 +1,7 @@
 import { env, InferenceSession, Tensor } from 'onnxruntime-web/wasm'
 import wasm from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url'
 import mjs from 'onnxruntime-web/ort-wasm-simd-threaded.mjs?url'
-import { LAMA_SIDE, packInput, unpackOutput } from '../engine/lama'
+import { INPAINT_SIDE, packInput, unpackOutput } from '../engine/inpaint'
 import { loadModel, ModelError, type ModelSpec } from './modelLoader'
 
 export type RepairRequest = { rgba: Uint8ClampedArray<ArrayBuffer>; mask: Uint8ClampedArray<ArrayBuffer>; model: ModelSpec }
@@ -34,7 +34,7 @@ const post = (reply: RepairReply, transfer: Transferable[] = []) => self.postMes
 self.addEventListener('message', async (event: MessageEvent<RepairRequest>) => {
   try {
     const { rgba, mask, model } = event.data
-    const { image, holes } = packInput(rgba, mask)
+    const { image, keep } = packInput(rgba, mask)
     session ??= createSession(model).catch((error) => {
       session = undefined
       throw error
@@ -42,10 +42,10 @@ self.addEventListener('message', async (event: MessageEvent<RepairRequest>) => {
     const engine = await session
     post({ type: 'running' })
     const outputs = await engine.run({
-      image: new Tensor('float32', image, [1, 3, LAMA_SIDE, LAMA_SIDE]),
-      mask: new Tensor('float32', holes, [1, 1, LAMA_SIDE, LAMA_SIDE]),
+      image: new Tensor('uint8', image, [1, 3, INPAINT_SIDE, INPAINT_SIDE]),
+      mask: new Tensor('uint8', keep, [1, 1, INPAINT_SIDE, INPAINT_SIDE]),
     })
-    unpackOutput(outputs[engine.outputNames[0]].data as Float32Array, rgba)
+    unpackOutput(outputs[engine.outputNames[0]].data as Uint8Array, rgba)
     post({ type: 'done', pixels: rgba }, [rgba.buffer])
   } catch (error) {
     const detail = String(error)

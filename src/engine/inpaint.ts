@@ -1,36 +1,36 @@
-// Chuyển dữ liệu giữa canvas và model LaMa (OpenCV Zoo inpainting_lama_2025jan.onnx).
-// Model nhận ảnh BGR 0–1 dạng [1,3,512,512], mặt nạ 0/1 dạng [1,1,512,512], trả ảnh BGR 0–255.
+// Chuyển dữ liệu giữa canvas và model xoá vật thể MI-GAN (Picsart AI Research, ICCV 2023, giấy phép MIT).
+// Bản ONNX pipeline nhận ảnh RGB uint8 [1,3,H,W] và mặt nạ uint8 [1,1,H,W] (0 = cần lấp, 255 = giữ),
+// trả ảnh RGB uint8 [1,3,H,W]. App luôn đưa vào khung 512×512.
 
-export const LAMA_SIDE = 512
-/** SHA-256 của inpainting_lama_2025jan.onnx (OpenCV Zoo, Apache-2.0), 92 591 623 byte. */
-export const LAMA_SHA256 = '7df918ac3921d3daf0aae1d219776cf0dc4e4935f035af81841b40adcf74fdf2'
-export const LAMA_BYTES = 92_591_623
+export const INPAINT_SIDE = 512
+/** SHA-256 của migan.onnx (huggingface.co/andraniksargsyan/migan), 29 546 882 byte. */
+export const MODEL_SHA256 = '593eba0b7e04730f1b61c0a3cbca68d97d8d6a7ff5c6a44a7b9d7fcd880fc5ae'
+export const MODEL_BYTES = 29_546_882
 /** Ngưỡng alpha của mặt nạ (0–255) để coi là điểm cần lấp. */
 export const MASK_THRESHOLD = 32
 
-export function packInput(rgba: ArrayLike<number>, mask: ArrayLike<number>, side = LAMA_SIDE) {
+export function packInput(rgba: ArrayLike<number>, mask: ArrayLike<number>, side = INPAINT_SIDE) {
   const area = side * side
   if (rgba.length !== area * 4 || mask.length !== area * 4) throw new Error(`Cần dữ liệu ${side}×${side} RGBA`)
-  const image = new Float32Array(area * 3)
-  const holes = new Float32Array(area)
+  const image = new Uint8Array(area * 3)
+  const keep = new Uint8Array(area)
   for (let i = 0; i < area; i++) {
-    image[i] = rgba[i * 4 + 2] / 255
-    image[i + area] = rgba[i * 4 + 1] / 255
-    image[i + area * 2] = rgba[i * 4] / 255
-    holes[i] = mask[i * 4 + 3] > MASK_THRESHOLD ? 1 : 0
+    image[i] = rgba[i * 4]
+    image[i + area] = rgba[i * 4 + 1]
+    image[i + area * 2] = rgba[i * 4 + 2]
+    keep[i] = mask[i * 4 + 3] > MASK_THRESHOLD ? 0 : 255
   }
-  return { image, holes }
+  return { image, keep }
 }
 
-/** Ghi kết quả model vào rgba (đè lên, alpha = 255). Giá trị lạ (NaN) thành 0. */
-export function unpackOutput(result: ArrayLike<number>, rgba: Uint8ClampedArray, side = LAMA_SIDE) {
+/** Ghi kết quả model (RGB theo kênh) vào rgba, alpha = 255. */
+export function unpackOutput(result: ArrayLike<number>, rgba: Uint8ClampedArray, side = INPAINT_SIDE) {
   const area = side * side
   if (result.length !== area * 3) throw new Error(`Model trả về ${result.length} giá trị, cần ${area * 3}`)
-  const value = (v: number) => (Number.isFinite(v) ? v : 0)
   for (let i = 0; i < area; i++) {
-    rgba[i * 4] = value(result[i + area * 2])
-    rgba[i * 4 + 1] = value(result[i + area])
-    rgba[i * 4 + 2] = value(result[i])
+    rgba[i * 4] = result[i]
+    rgba[i * 4 + 1] = result[i + area]
+    rgba[i * 4 + 2] = result[i + area * 2]
     rgba[i * 4 + 3] = 255
   }
   return rgba
@@ -51,7 +51,7 @@ const RING = 10
  * Khoảng cách (px, xấp xỉ Euclid bằng chamfer 3-4) từ mỗi điểm tới điểm gần nhất của mặt nạ.
  * Điểm trong mặt nạ có khoảng cách 0. mask: alpha RGBA hoặc mảng 0/1 cỡ side×side.
  */
-export function distanceToMask(mask: ArrayLike<number>, side = LAMA_SIDE, stride = 4, offset = 3, threshold = MASK_THRESHOLD) {
+export function distanceToMask(mask: ArrayLike<number>, side = INPAINT_SIDE, stride = 4, offset = 3, threshold = MASK_THRESHOLD) {
   const area = side * side
   const INF = 1e9
   const d = new Float32Array(area)
@@ -83,7 +83,7 @@ export function distanceToMask(mask: ArrayLike<number>, side = LAMA_SIDE, stride
 }
 
 /** Mặt nạ đưa cho model (RGBA, alpha 255/0): nét tô nới thêm DILATE + FEATHER px. */
-export function holeMask(distance: Float32Array, side = LAMA_SIDE, grow = DILATE + FEATHER) {
+export function holeMask(distance: Float32Array, side = INPAINT_SIDE, grow = DILATE + FEATHER) {
   const out = new Uint8ClampedArray(side * side * 4)
   for (let i = 0; i < side * side; i++) if (distance[i] <= grow) out[i * 4 + 3] = 255
   return out
@@ -125,19 +125,26 @@ function pullPush(values: Float32Array, known: Uint8Array, w: number, h: number,
   }
 }
 
-/** Độ lệch chuẩn phần chi tiết nhỏ (hạt nhiễu) của độ sáng tại các điểm được chọn. */
+/** Hạt nhiễu tối đa thêm vào (mức trên 255). Ảnh điện thoại thường 1–4; quá mức này nhìn thành lốm đốm. */
+export const MAX_GRAIN = 4
+
+/**
+ * Độ lệch chuẩn hạt nhiễu của độ sáng tại các điểm được chọn. Dùng phân vị thấp của |chi tiết nhỏ|
+ * thay vì trung bình bình phương, để mép vật, lá cây, vạch kẻ đường không bị tính nhầm thành nhiễu.
+ */
 function grain(rgba: ArrayLike<number>, pick: (i: number) => boolean, side: number) {
   const lum = (i: number) => rgba[i * 4] * .3 + rgba[i * 4 + 1] * .59 + rgba[i * 4 + 2] * .11
-  let sum = 0, n = 0
+  const values: number[] = []
   for (let y = 1; y < side - 1; y++) for (let x = 1; x < side - 1; x++) {
     const i = y * side + x
     if (!pick(i)) continue
-    const hp = lum(i) - (lum(i - 1) + lum(i + 1) + lum(i - side) + lum(i + side)) / 4
-    sum += hp * hp
-    n++
+    values.push(Math.abs(lum(i) - (lum(i - 1) + lum(i + 1) + lum(i - side) + lum(i + side)) / 4))
   }
-  // nhiễu trắng qua bộ lọc này có biên độ ×√1.25
-  return n ? Math.sqrt(sum / n / 1.25) : 0
+  if (values.length < 16) return 0
+  values.sort((p, q) => p - q)
+  // Lấy phân vị 25% chứ không lấy trung vị: chỉ phản ánh phần phẳng nhất quanh vật, nên mép, lá cây, khối nén JPEG
+  // không bị tính thành hạt. Nhiễu chuẩn σ qua bộ lọc này có độ lệch σ√1.25; phân vị 25% của |N(0,1)| = 0.3186.
+  return values[values.length >> 2] / .3186 / Math.sqrt(1.25)
 }
 
 /**
@@ -147,7 +154,7 @@ function grain(rgba: ArrayLike<number>, pick: (i: number) => boolean, side: numb
  * 2. Hạt nhiễu: thêm nhiễu cùng cỡ với ảnh gốc quanh đó, để phần lấp không mịn bất thường.
  * 3. Alpha: đặc trong vùng nét tô + DILATE, giảm dần qua FEATHER px để hoà vào ảnh gốc.
  */
-export function composeFill(input: ArrayLike<number>, output: Uint8ClampedArray, distance: Float32Array, side = LAMA_SIDE, seed = 1) {
+export function composeFill(input: ArrayLike<number>, output: Uint8ClampedArray, distance: Float32Array, side = INPAINT_SIDE, seed = 1) {
   const area = side * side
   const hole = DILATE + FEATHER
   // 1. cân màu
@@ -170,7 +177,7 @@ export function composeFill(input: ArrayLike<number>, output: Uint8ClampedArray,
   // 2. hạt nhiễu
   const want = grain(input, (i) => distance[i] > hole && distance[i] <= hole + RING * 2, side)
   const have = grain(output, (i) => distance[i] <= hole, side)
-  const amount = Math.sqrt(Math.max(0, want * want - have * have))
+  const amount = Math.min(MAX_GRAIN, Math.sqrt(Math.max(0, want * want - have * have)))
   let state = (seed >>> 0) || 1
   const rnd = () => {
     state = (state * 1664525 + 1013904223) >>> 0
