@@ -18,6 +18,8 @@
   --err: #ff8573;
   --font: 'Archivo Variable', system-ui, sans-serif;
   --tools-w: clamp(300px, 28vw, 380px);
+  /* vùng chạm tối thiểu trên màn cảm ứng (Apple khuyên 44 pt) */
+  --tap: 44px;
   color-scheme: dark;
 }
 
@@ -461,3 +463,21 @@ dialog h2 { font-size: 26px; font-weight: 800; font-stretch: 118%; letter-spacin
 @media (prefers-reduced-motion: reduce) {
   .brush-ping.go { animation: none; }
 }
+
+/* ---------- màn cảm ứng: vùng chạm tối thiểu --tap ---------- */
+@media (pointer: coarse) {
+  .icon-btn, .band-reset { width: var(--tap); height: var(--tap); }
+  .primary, .ghost, .stage-btn, .chip, .pill button { height: var(--tap); }
+  .pill button { min-width: var(--tap); }
+  .tool-options button, .home-looks button, .home-tools-link { min-height: var(--tap); }
+  .split-grip { width: var(--tap); height: var(--tap); }
+  /* nút nhỏ giữ nguyên cỡ nhìn thấy, nới vùng chạm bằng lớp trong suốt */
+  .toast .toast-x { position: relative; }
+  .toast .toast-x::before, .collage-remove::before, .decoration-resize::before, .decoration-rotate::before,
+  .sunlight-handles button::before { content: ''; position: absolute; inset: -10px; }
+  /* iPhone tự phóng to trang khi chạm vào ô nhập có chữ nhỏ hơn 16 px */
+  input:not([type='range']):not([type='color']):not([type='radio']):not([type='checkbox']), select, textarea { font-size: 16px; }
+  /* không hiện hiệu ứng rê chuột bị "dính" sau khi chạm */
+  .home-tool:hover:not(:disabled) { translate: none; }
+}
+
