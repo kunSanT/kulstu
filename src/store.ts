@@ -165,6 +165,8 @@ function go(d: number) {
 }
 export const undo = () => go(-1)
 export const redo = () => go(1)
+/** Quay về một bước bất kỳ trong lịch sử (bước 0 là ảnh gốc). */
+export const jumpTo = (n: number) => go(n - state.hi)
 
 /** Thêm một điểm xoá mụn trong lúc đang lướt; cả nét lướt được chốt thành một bước bằng commit(). */
 export function addSpot(s: Spot): boolean {

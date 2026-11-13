@@ -7,12 +7,15 @@ import { drawRepairs } from '../services/repair'
 import { applyPushes, fieldAt, makeField, type Field } from '../engine/liquify'
 import { displayToSrc, orientedSize, outputSize, warpPoint } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
+import { haptic } from './haptic'
 import { addBrushStroke, addPush, addSpot, commit, getState, queueRepair, setHold, setSplit, setSplitX, toast, useStore } from '../store'
 import { CropOverlay } from './CropOverlay'
 import { DecorationHandles } from './DecorationHandles'
 import { SunlightHandles } from './SunlightHandles'
 
 const MAX_ZOOM = 4
+/** Mức phóng khi chạm đúp vào ảnh. */
+const DOUBLE_TAP_ZOOM = 2.5
 export const brushRadius = (brush: number) => 0.004 + (brush / 100) * 0.026
 export const smoothRadius = (size: number) => 0.01 + (size / 100) * 0.07
 export const eraseRadius = (size: number) => 0.006 + (size / 100) * 0.06
@@ -291,6 +294,22 @@ export function Stage() {
       return { n: a.length, cx, cy, d: a.length > 1 ? Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) : 0 }
     }
     const active = () => !!getState().src && getState().tab !== 'crop'
+    // chạm đúp (ngoài công cụ cọ): phóng to tại điểm chạm, chạm đúp lần nữa để về vừa khung
+    let tapStart: { t: number; x: number; y: number } | null = null
+    let lastTap: { t: number; x: number; y: number } | null = null
+    const doubleTap = (x: number, y: number) => {
+      haptic()
+      const v = view.current
+      if (v.z > 1.05) {
+        setZoom(1, 0, 0)
+        return
+      }
+      const z = DOUBLE_TAP_ZOOM
+      const b = vp.getBoundingClientRect()
+      const ox = x - b.left - b.width / 2
+      const oy = y - b.top - b.height / 2
+      setZoom(z, ox - (ox - v.tx) * (z / v.z), oy - (oy - v.ty) * (z / v.z))
+    }
     const ringPx = () => {
       const s = getState()
       const fr = frameRef.current!.getBoundingClientRect()
@@ -395,6 +414,7 @@ export function Stage() {
       if (!active() || e.button !== 0 || (e.target as Element).closest('[data-nopan]')) return
       vp.setPointerCapture(e.pointerId)
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      tapStart = pts.size === 1 && !isBrushTab() ? { t: e.timeStamp, x: e.clientX, y: e.clientY } : null
       gest = snap()
       if (isBrushTab() && pts.size === 1 && !space) {
         stroke = { x: e.clientX, y: e.clientY, full: false }
@@ -465,6 +485,14 @@ export function Stage() {
       pts.delete(e.pointerId)
       gest = snap()
       endStroke(cancelled)
+      if (!cancelled && tapStart && !pts.size && e.timeStamp - tapStart.t < 250
+        && Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y) < 10) {
+        if (lastTap && e.timeStamp - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 32) {
+          lastTap = null
+          doubleTap(e.clientX, e.clientY)
+        } else lastTap = { t: e.timeStamp, x: e.clientX, y: e.clientY }
+      }
+      tapStart = null
     }
     const onLeave = () => ringRef.current && !stroke && (ringRef.current.hidden = true)
     // giữ phím cách để kéo ảnh khi đang ở công cụ xoá mụn
@@ -528,6 +556,7 @@ export function Stage() {
       e.preventDefault()
       e.currentTarget.setPointerCapture(e.pointerId)
       setHold(true)
+      haptic()
     },
     onPointerUp: () => setHold(false),
     onPointerCancel: () => setHold(false),

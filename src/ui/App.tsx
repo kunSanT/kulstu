@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
+import { describeHistory } from '../engine/history'
 import { freshRecipe, outputSize, type PresetId } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
 import { exportImage, type ExportFormat } from '../services/image'
 import { detectPlatform, isPhone } from '../services/save'
 import { listDrafts, type DraftSummary } from '../services/draft'
 import {
-  boot, change, dismissToast, flushDraft, getState, openFile, openProject, openSample, redo, removeDraft, runExport, setTab, undo, useStore, type Tab,
+  boot, change, dismissToast, flushDraft, getState, jumpTo, openFile, openProject, openSample, redo, removeDraft, runExport, setTab, undo, useStore, type Tab,
 } from '../store'
 import { BodyPanel, ColorMatchPanel, ColorPanel, CropPanel, DetailPanel, HealPanel, PresetPanel, SkinPanel, SunlightPanel } from './Panels'
+import { haptic } from './haptic'
+import { nextSheet, SHEET_SWIPE, type Sheet } from './sheet'
 import { Stage } from './Stage'
 import { BackgroundPanel, CollageDialog, CreatePanel, HairPanel } from './CreativePanels'
 
@@ -297,10 +300,14 @@ function Editor({ openCollage }: { openCollage: () => void }) {
   const exporting = useStore((s) => s.exporting)
   const draft = useStore((s) => s.draft)
   const name = useStore((s) => s.src?.sample ? 'Ảnh mẫu' : s.src?.name)
-  const [collapsed, setCollapsed] = useState(false)
+  // bảng công cụ trên điện thoại: thu gọn / vừa / mở rộng (kéo thanh nắm hoặc bấm nút thu gọn)
+  const [sheet, setSheet] = useState<Sheet>('normal')
+  const collapsed = sheet === 'collapsed'
+  const sheetDrag = useRef<{ id: number; y: number } | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   const fileDlg = useRef<HTMLDialogElement>(null)
   const exportDlg = useRef<HTMLDialogElement>(null)
+  const historyDlg = useRef<HTMLDialogElement>(null)
   const group = GROUPS.find((g) => g.tools.some((tool) => tool.id === tab)) ?? GROUPS[1]
   const Panel = PANELS[tab] ?? ColorPanel
 
@@ -315,8 +322,13 @@ function Editor({ openCollage }: { openCollage: () => void }) {
         <button type="button" className="icon-btn" aria-label="Làm lại" title="Làm lại (Ctrl+Shift+Z)" disabled={!canRedo} onClick={redo}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></svg>
         </button>
-        <button type="button" className={'ghost' + (draft === 'failed' ? ' warn' : '')} onClick={() => fileDlg.current?.showModal()}>
-          Đổi ảnh
+        <button type="button" className="icon-btn" aria-label="Lịch sử chỉnh sửa" title="Lịch sử chỉnh sửa" disabled={!canUndo && !canRedo}
+          onClick={() => historyDlg.current?.showModal()}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 3" /></svg>
+        </button>
+        <button type="button" className={'ghost icon-label' + (draft === 'failed' ? ' warn' : '')} aria-label="Đổi ảnh" onClick={() => fileDlg.current?.showModal()}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m4 17 5-5 3 3 4-5 5 7" /></svg>
+          <span className="btn-label">Đổi ảnh</span>
         </button>
         <button type="button" className="primary" disabled={exporting} onClick={() => {
           exportDlg.current?.showModal()
@@ -331,7 +343,7 @@ function Editor({ openCollage }: { openCollage: () => void }) {
           {GROUPS.map((g) => <button key={g.name} type="button" className="dock-tool" aria-pressed={g === group}
             aria-controls="tool-panel" onClick={() => {
               if (g !== group) setTab(g.tools[0].id)
-              setCollapsed(false)
+              if (collapsed) setSheet('normal')
             }}>
             <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={g.icon} /></svg>
             <span>{g.name}</span>
@@ -342,11 +354,30 @@ function Editor({ openCollage }: { openCollage: () => void }) {
           </button>
         </nav>
         <Stage />
-        <aside className="tools" data-collapsed={collapsed} data-subtools={group.tools.length > 1} aria-label="Thông số công cụ">
+        <aside className="tools" data-collapsed={collapsed} data-sheet={sheet} data-subtools={group.tools.length > 1} aria-label="Thông số công cụ">
+          <button type="button" className="sheet-grip" aria-label={sheet === 'tall' ? 'Thu nhỏ bảng chỉnh' : 'Mở rộng bảng chỉnh'}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId)
+              sheetDrag.current = { id: e.pointerId, y: e.clientY }
+            }}
+            onPointerUp={(e) => {
+              const drag = sheetDrag.current
+              sheetDrag.current = null
+              if (!drag || drag.id !== e.pointerId) return
+              setSheet((current) => nextSheet(current, e.clientY - drag.y))
+              haptic()
+            }}
+            onPointerCancel={() => { sheetDrag.current = null }}
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+              e.preventDefault()
+              setSheet((current) => nextSheet(current, e.key === 'ArrowUp' ? -SHEET_SWIPE : SHEET_SWIPE))
+            }}
+            onClick={(e) => { if (e.detail === 0) setSheet((current) => nextSheet(current, 0)) }} />
           <div className="tool-heading">
             <h2>{group.name}</h2>
             <button type="button" className="icon-btn tool-collapse" aria-controls="tool-panel" aria-expanded={!collapsed}
-              aria-label={collapsed ? 'Mở bảng chỉnh' : 'Thu gọn bảng chỉnh'} onClick={() => setCollapsed((value) => !value)}>
+              aria-label={collapsed ? 'Mở bảng chỉnh' : 'Thu gọn bảng chỉnh'} onClick={() => setSheet(collapsed ? 'normal' : 'collapsed')}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d={collapsed ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6'} /></svg>
             </button>
           </div>
@@ -359,9 +390,43 @@ function Editor({ openCollage }: { openCollage: () => void }) {
         </aside>
       </main>
 
+      <Coach />
       <FileDialog ref={fileDlg} />
+      <HistoryDialog ref={historyDlg} />
       <ExportDialog ref={exportDlg} open={exportOpen} onClose={() => setExportOpen(false)} />
     </>
+  )
+}
+
+const COACH_KEY = 'kulstu.coach.v1'
+const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+const COACH_TIPS = touch
+  ? ['Chụm hai ngón để phóng to ảnh, chạm đúp để về vừa khung.', 'Giữ nút “Ảnh gốc” dưới ảnh để so với lúc chưa chỉnh.', 'Vuốt thanh nhỏ trên bảng chỉnh lên để mở rộng, xuống để thu gọn.']
+  : ['Cuộn chuột để phóng to, kéo để dời ảnh, chạm đúp để về vừa khung.', 'Giữ nút “Ảnh gốc” dưới ảnh để so với lúc chưa chỉnh.', 'Ctrl+Z để hoàn tác. Nút đồng hồ trên cùng mở lịch sử chỉnh sửa.']
+
+/** Gợi ý ngắn ở lần đầu mở editor; đã xem hoặc bỏ qua thì không hiện lại. */
+function Coach() {
+  const [step, setStep] = useState(() => {
+    try {
+      return localStorage.getItem(COACH_KEY) ? -1 : 0
+    } catch {
+      return -1 // trình duyệt chặn lưu trữ: không làm phiền
+    }
+  })
+  if (step < 0) return null
+  const done = () => {
+    setStep(-1)
+    try { localStorage.setItem(COACH_KEY, '1') } catch { /* bỏ qua */ }
+  }
+  const last = step === COACH_TIPS.length - 1
+  return (
+    <div className="coach" role="dialog" aria-label="Gợi ý sử dụng" aria-live="polite">
+      <p><span className="coach-step">{step + 1}/{COACH_TIPS.length}</span>{COACH_TIPS[step]}</p>
+      <div className="coach-actions">
+        {!last && <button type="button" className="link" onClick={done}>Bỏ qua</button>}
+        <button type="button" className="primary" onClick={() => (last ? done() : setStep(step + 1))}>{last ? 'Đã hiểu' : 'Tiếp'}</button>
+      </div>
+    </div>
   )
 }
 
@@ -391,6 +456,35 @@ function FileDialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> })
         <span className="grow" />
         <button type="button" className="ghost" autoFocus onClick={close}>Đóng</button>
         <button type="button" className="primary" onClick={() => { close(); pickFile() }}>Chọn ảnh khác</button>
+      </div>
+    </dialog>
+  )
+}
+
+function HistoryDialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> }) {
+  const hist = useStore((s) => s.hist)
+  const hi = useStore((s) => s.hi)
+  const names = describeHistory(hist)
+  const close = () => ref.current?.close()
+  return (
+    <dialog ref={ref} aria-labelledby="historyTitle" className="history-dialog" onClick={(e) => e.target === ref.current && close()}>
+      <h2 id="historyTitle">Lịch sử</h2>
+      <p className="note">Chạm vào một bước để quay về đó. Các bước sau vẫn còn cho tới khi bạn chỉnh tiếp.</p>
+      <ol className="history-list" reversed>
+        {names.map((name, i) => ({ name, i })).reverse().map(({ name, i }) => (
+          <li key={i}>
+            <button type="button" aria-current={i === hi ? 'step' : undefined} data-future={i > hi}
+              onClick={() => { jumpTo(i); close() }}>
+              <span className="history-index">{i}</span>
+              <span>{name}</span>
+              {i === hi && <span className="history-here">Đang xem</span>}
+            </button>
+          </li>
+        ))}
+      </ol>
+      <div className="dlg-actions">
+        <span className="grow" />
+        <button type="button" className="ghost" autoFocus onClick={close}>Đóng</button>
       </div>
     </dialog>
   )
