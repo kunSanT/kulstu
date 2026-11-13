@@ -368,7 +368,12 @@ a.mark:hover { color: var(--ice); }
 .collage-heading h2 { margin: 0; }
 .collage-close { flex: none; border: 1px solid var(--line); background: var(--s2); }
 .collage-files { display: grid; gap: 8px; margin: 14px 0; }
-.collage-preview { position: relative; width: min(100%, 42dvh); margin: 12px auto 8px; }
+.collage-preview { position: relative; width: min(100%, 46dvh); margin: 12px auto 8px; }
+.collage-sliders { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+.collage-sliders label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.collage-sliders b { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 600; }
+.collage-sliders input { width: 100%; min-height: 32px; accent-color: var(--ice); }
+@media (pointer: coarse) { .collage-sliders input { min-height: var(--tap); } }
 .collage-preview canvas { display: block; width: 100%; height: auto; }
 .collage-slot { position: absolute; touch-action: none; cursor: grab; }
 .collage-slot[data-dragging='true'] { cursor: grabbing; background: #10101055; box-shadow: inset 0 0 0 2px var(--ice); }

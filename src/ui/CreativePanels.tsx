@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Decoration, Recipe } from '../engine/recipe'
-import { COLLAGE_MAX, COLLAGE_MIN, collageDividers, collageSlots, drawCollage, keyTarget, resizePair, type CollagePhoto, type Layout } from '../engine/collage'
+import { COLLAGE_MAX, COLLAGE_MIN, collageDividers, collageSlots, DEFAULT_FRAME, drawCollage, keyTarget, resizePair, type CollagePhoto, type Frame, type Layout } from '../engine/collage'
 import { decodeFile, releaseSource } from '../services/image'
 import { detectPlatform, isPhone } from '../services/save'
 import { change, chooseBackground, commit, deliverImage, ensureCutout, ensureHair, live, selectDecoration, useStore } from '../store'
@@ -96,8 +96,11 @@ export function CreatePanel() {
 }
 
 const layouts: { id: Layout; label: string }[] = [
-  { id: 'row', label: 'Ngang' }, { id: 'column', label: 'Dọc' }, { id: 'grid', label: 'Lưới' },
+  { id: 'grid', label: 'Lưới' }, { id: 'row', label: 'Ngang' }, { id: 'column', label: 'Dọc' },
+  { id: 'hero-left', label: 'Ảnh lớn trái' }, { id: 'hero-top', label: 'Ảnh lớn trên' },
 ]
+/** Tỷ lệ khung ảnh ghép: vuông, dọc Instagram, dọc story. */
+const ratios: { label: string; ratio: number }[] = [{ label: '1:1', ratio: 1 }, { label: '4:5', ratio: 4 / 5 }, { label: '9:16', ratio: 9 / 16 }]
 
 const collageSaveLabel = isPhone(detectPlatform()) ? 'Lưu ảnh ghép vào thư viện' : 'Tải ảnh ghép'
 
@@ -108,6 +111,12 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
   const [weights, setWeights] = useState<number[]>([])
   const [layout, setLayout] = useState<Layout>('grid')
   const [color, setColor] = useState('#ffffff')
+  const [ratio, setRatio] = useState(1)
+  /** khoảng cách giữa các ô (% cạnh ngắn của khung) và bo góc (% nửa cạnh ngắn của ô) */
+  const [gapPct, setGapPct] = useState(DEFAULT_FRAME.gap * 100)
+  const [radiusPct, setRadiusPct] = useState(0)
+  const frameSpec: Frame = { ratio, gap: gapPct / 100 }
+  const style = { frame: frameSpec, radius: radiusPct / 100 }
   const [referenceId, setReferenceId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -120,8 +129,8 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
   const frame = useRef<HTMLDivElement>(null)
   useEffect(() => () => { generation.current++ }, [])
   useEffect(() => {
-    if (photos.length && preview.current) drawCollage(preview.current, photos, layout, 440, color, referenceId, weights)
-  }, [photos, layout, color, referenceId, weights])
+    if (photos.length && preview.current) drawCollage(preview.current, photos, layout, 440, color, referenceId, weights, style)
+  }, [photos, layout, color, referenceId, weights, ratio, gapPct, radiusPct])
 
   const room = COLLAGE_MAX - photos.length
 
@@ -209,7 +218,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
     setError('')
     try {
       const canvas = document.createElement('canvas')
-      drawCollage(canvas, photos, layout, 1600, color, referenceId, weights)
+      drawCollage(canvas, photos, layout, 1600, color, referenceId, weights, style)
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
       if (request !== generation.current) return
       if (!blob) throw new Error('encode')
@@ -221,8 +230,8 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
     }
   }
 
-  const slots = collageSlots(photos.length, layout, weights)
-  const dividers = collageDividers(photos.length, layout, weights)
+  const slots = collageSlots(photos.length, layout, weights, frameSpec)
+  const dividers = collageDividers(photos.length, layout, weights, frameSpec)
 
   return <dialog ref={dialog} aria-labelledby="collage-title" className="collage-dialog"
     onCancel={(e) => { e.preventDefault(); close() }}
@@ -258,6 +267,18 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
         disabled={busy} onClick={() => chooseLayout(option.id)}>{option.label}</button>)}
       <input type="color" aria-label="Màu viền ảnh ghép" value={color} disabled={busy} onChange={(e) => setColor(e.currentTarget.value)} />
     </div>
+    <div className="chips" role="group" aria-label="Tỷ lệ khung">
+      {ratios.map((option) => <button key={option.label} type="button" className="chip" aria-pressed={ratio === option.ratio}
+        disabled={busy} onClick={() => setRatio(option.ratio)}>{option.label}</button>)}
+    </div>
+    <div className="collage-sliders">
+      <label>Khoảng cách <b>{Math.round(gapPct * 10) / 10}%</b>
+        <input type="range" min={0} max={6} step={.2} value={gapPct} disabled={busy} onChange={(e) => setGapPct(Number(e.currentTarget.value))} />
+      </label>
+      <label>Bo góc <b>{radiusPct}%</b>
+        <input type="range" min={0} max={100} step={5} value={radiusPct} disabled={busy} onChange={(e) => setRadiusPct(Number(e.currentTarget.value))} />
+      </label>
+    </div>
     {!!photos.length && <>
       <label className="row-between">Cân màu ảnh ghép
         <select value={referenceId ?? ''} disabled={busy}
@@ -266,7 +287,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
           {photos.map((photo, i) => <option key={photo.id} value={photo.id}>Theo ảnh {i + 1}</option>)}
         </select>
       </label>
-      <div className="collage-preview" ref={frame}>
+      <div className="collage-preview" ref={frame} style={{ width: `min(100%, ${Math.round(46 * Math.min(1, ratio) * 10) / 10}dvh)` }}>
         <canvas ref={preview} aria-label="Xem trước ảnh ghép" />
         {slots.map((slot, i) => (
           <button key={photos[i].id} type="button" className="collage-slot" data-collage-slot={i}
@@ -305,7 +326,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
         ))}
         {dividers.map((divider) => {
           const vertical = divider.axis === 'x'
-          const nudge = (delta: number) => setWeights((current) => resizePair(current, photos.length, layout, divider.a, delta))
+          const nudge = (delta: number) => setWeights((current) => resizePair(current, photos.length, layout, divider.a, delta, frameSpec))
           return <div key={`${divider.a}-${layout}`} className="collage-divider" role="separator" tabIndex={busy ? -1 : 0}
             aria-orientation={vertical ? 'vertical' : 'horizontal'}
             aria-label={`Đổi ${vertical ? 'độ rộng' : 'chiều cao'} ảnh ${divider.a + 1} và ${divider.b + 1}`}
@@ -327,7 +348,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
               const active = resize.current
               if (!active || active.id !== e.pointerId || !active.size) return
               const delta = ((vertical ? e.clientX : e.clientY) - active.start) / active.size
-              setWeights(resizePair(active.weights, photos.length, layout, active.a, delta))
+              setWeights(resizePair(active.weights, photos.length, layout, active.a, delta, frameSpec))
             }}
             onPointerUp={endResize}
             onPointerCancel={endResize}

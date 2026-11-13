@@ -2,8 +2,8 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { makeCanvas, pixel } from './dom.ts'
 import {
-  collageDividers, collageRows, collageSlots, coverCrop, drawCollage, keyTarget, MIN_SLOT, resizePair, slotPixels,
-  type CollagePhoto, type Layout, type Slot,
+  canvasSize, collageDividers, collageRows, collageSlots, coverCrop, drawCollage, frameGaps, HERO_SHARE, keyTarget, MIN_SLOT, resizePair, slotPixels,
+  type CollagePhoto, type Frame, type Layout, type Slot,
 } from '../src/engine/collage.ts'
 
 const layouts: Layout[] = ['row', 'column', 'grid']
@@ -146,3 +146,90 @@ describe('drawCollage', () => {
     assert.deepEqual(pixel(canvas, 75, 50), [255, 0, 0, 255])
   })
 })
+
+describe('khung không vuông, khoảng cách, bố cục ảnh lớn', () => {
+  const heroes: Layout[] = ['hero-left', 'hero-top']
+  for (const ratio of [1, 4 / 5, 9 / 16, 16 / 9]) for (const layout of [...layouts, ...heroes]) for (const n of [2, 3, 5]) {
+    test(`tỷ lệ ${ratio.toFixed(2)}, ${layout}, ${n} ảnh: nằm trong khung, không chồng nhau, khe đều theo pixel`, () => {
+      const frame: Frame = { ratio, gap: .02 }
+      const slots = collageSlots(n, layout, undefined, frame)
+      assert.equal(slots.length, n)
+      for (const s of slots) assert.ok(s.x > 0 && s.y > 0 && s.x + s.width < 1 + 1e-9 && s.y + s.height < 1 + 1e-9)
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) assert.ok(!overlap(slots[i], slots[j]))
+      // lề trái (theo pixel trên canvas W×H) bằng lề trên
+      const { w, h } = canvasSize(1000, ratio)
+      const minX = Math.min(...slots.map((s) => s.x)) * w, minY = Math.min(...slots.map((s) => s.y)) * h
+      near(minX, minY, 1)
+    })
+  }
+
+  test('frameGaps: khung ngang thì khe ngang hẹp hơn theo tỷ lệ, khung dọc thì khe dọc', () => {
+    assert.deepEqual(frameGaps({ ratio: 2, gap: .02 }), { gx: .01, gy: .02 })
+    const tall = frameGaps({ ratio: .5, gap: .02 })
+    near(tall.gx, .02); near(tall.gy, .01)
+  })
+
+  test('canvasSize theo cạnh dài', () => {
+    assert.deepEqual(canvasSize(1600, 1), { w: 1600, h: 1600 })
+    assert.deepEqual(canvasSize(1600, 4 / 5), { w: 1280, h: 1600 })
+    assert.deepEqual(canvasSize(1600, 9 / 16), { w: 900, h: 1600 })
+  })
+
+  test('hero-left: ảnh đầu cao hết khung, chiếm ~60% bề ngang; ảnh còn lại xếp dọc bên phải', () => {
+    const slots = collageSlots(4, 'hero-left')
+    near(slots[0].height, 1 - .028)
+    assert.ok(Math.abs(slots[0].width / (slots[0].width + slots[1].width) - HERO_SHARE) < .01)
+    for (const s of slots.slice(1)) near(s.x, slots[1].x)
+    assert.ok(slots[2].y > slots[1].y && slots[3].y > slots[2].y)
+  })
+
+  test('hero-top: ảnh đầu rộng hết khung; các ảnh còn lại xếp một hàng bên dưới', () => {
+    const slots = collageSlots(3, 'hero-top')
+    near(slots[0].width, 1 - .028)
+    near(slots[1].y, slots[2].y)
+    assert.ok(slots[1].y > slots[0].y + slots[0].height)
+  })
+
+  test('bố cục ảnh lớn: không có tay kéo, kéo không đổi gì; phím mũi tên đi tuần tự', () => {
+    assert.deepEqual(collageDividers(4, 'hero-left'), [])
+    assert.deepEqual(resizePair([1, 1, 1], 3, 'hero-top', 0, .2), [1, 1, 1])
+    assert.equal(keyTarget(0, 'ArrowRight', 3, 'hero-left'), 1)
+    assert.equal(keyTarget(0, 'ArrowUp', 3, 'hero-left'), -1)
+    assert.equal(keyTarget(2, 'ArrowDown', 3, 'hero-top'), -1)
+  })
+
+  test('khe rộng hơn thì ô nhỏ hơn; khe 0 thì ô sát mép', () => {
+    const tight = collageSlots(2, 'row', undefined, { ratio: 1, gap: 0 })
+    near(tight[0].x, 0); near(tight[1].x + tight[1].width, 1)
+    const wide = collageSlots(2, 'row', undefined, { ratio: 1, gap: .05 })
+    assert.ok(wide[0].width < tight[0].width)
+  })
+})
+
+describe('drawCollage: tỷ lệ khung và bo góc', () => {
+  const photo = (id: number, color: [number, number, number]): CollagePhoto => ({ id, name: `p${id}`, preview: makeCanvas(60, 60, color) })
+
+  test('khung 4:5 cho canvas đúng cỡ', () => {
+    const canvas = document.createElement('canvas')
+    drawCollage(canvas, [photo(1, [255, 0, 0]), photo(2, [0, 0, 255])], 'row', 200, '#ffffff', null, undefined, { frame: { ratio: 4 / 5, gap: .02 } })
+    assert.deepEqual([canvas.width, canvas.height], [160, 200])
+  })
+
+  test('bo góc: góc ô lộ màu nền, giữa ô là ảnh', () => {
+    const canvas = document.createElement('canvas')
+    drawCollage(canvas, [photo(1, [255, 0, 0]), photo(2, [0, 0, 255])], 'row', 200, '#00ff00', null, undefined, { frame: { ratio: 1, gap: .02 }, radius: 1 })
+    const s = collageSlots(2, 'row', undefined, { ratio: 1, gap: .02 })[0]
+    const area = slotPixels(s, 200)
+    assert.deepEqual(pixel(canvas, area.left + 1, area.top + 1), [0, 255, 0, 255], 'góc bị bo')
+    assert.deepEqual(pixel(canvas, area.left + area.width / 2, area.top + area.height / 2), [255, 0, 0, 255])
+  })
+
+  test('cân màu kèm bo góc không làm đổi màu nền ở góc', () => {
+    const canvas = document.createElement('canvas')
+    drawCollage(canvas, [photo(1, [200, 60, 60]), photo(2, [60, 60, 200])], 'row', 200, '#00ff00', 1, undefined, { radius: 1 })
+    const s = collageSlots(2, 'row')[1]
+    const area = slotPixels(s, 200)
+    assert.deepEqual(pixel(canvas, area.left + 1, area.top + 1), [0, 255, 0, 255])
+  })
+})
+

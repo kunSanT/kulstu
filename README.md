@@ -11,7 +11,7 @@ Web app chỉnh ảnh chân dung ngay trong trình duyệt, ưu tiên điện th
 - Chỉnh sáng, tương phản, bão hòa, nhiệt độ màu; preset màu có cường độ
 - Làm mịn da, xoá mụn, kéo nắn (liquify), chỉnh dáng người
 - Xoá vật thể bằng AI (MI-GAN, chạy bằng ONNX Runtime Web ngay trên máy người dùng, ~3 giây mỗi lần, model 7,7 MB)
-- Ghép 2–9 ảnh: đổi chỗ, xoá ảnh, kéo vạch để đổi độ rộng từng ảnh, cân màu theo một ảnh
+- Ghép 2–9 ảnh: lưới, ngang, dọc hoặc một ảnh lớn; khung 1:1, 4:5, 9:16; chỉnh khoảng cách và bo góc; đổi chỗ, xoá ảnh, kéo vạch để đổi độ rộng, cân màu theo một ảnh
 - So sánh trước/sau, hoàn tác/làm lại 20 bước, tự lưu bản nháp vào IndexedDB
 - Lưu ảnh: máy tính tải tệp xuống; điện thoại có nút **Lưu vào thư viện ảnh** (iPhone/iPad mở bảng Chia sẻ → Lưu hình ảnh, Android lưu vào Thư viện)
 
@@ -62,7 +62,9 @@ Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm g
 
 | Tệp | Kiểm tra |
 | --- | --- |
-| `test/collage.test.ts` | Bố cục, độ rộng từng ảnh, tay kéo, đổi chỗ bằng phím, vẽ ảnh ghép, cân màu |
+| `test/collage.test.ts` | Bố cục (cả khung không vuông và ảnh lớn), khoảng cách, bo góc, độ rộng từng ảnh, tay kéo, đổi chỗ bằng phím, cân màu |
+| `test/history.test.ts` | Đặt tên từng bước trong lịch sử chỉnh sửa |
+| `test/sheet.test.ts` | Nấc của bảng chỉnh khi vuốt trên điện thoại |
 | `test/repair.test.ts` | Nguồn model, khung cắt quanh vùng tô, tiến độ và giới hạn thời gian, thông báo lỗi, mảng vá đúng vị trí |
 | `test/modelLoader.test.ts` | Tải model: máy chủ trả HTML, 404, mất mạng, tải thiếu, sai SHA-256, cache |
 | `test/inpaint.test.ts` | Chuyển dữ liệu ảnh ↔ model; ghép phần lấp: nới mặt nạ, hoà mép, cân màu, hạt nhiễu |
