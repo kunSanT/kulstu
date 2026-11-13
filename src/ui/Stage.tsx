@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { applyErases } from '../engine/erase'
+import { applyErases, type Erase } from '../engine/erase'
 import { applySpots } from '../engine/heal'
 import { brushMask } from '../engine/smoothBrush'
 import { drawDecorations } from '../engine/decorations'
-import { drawRepairs } from '../services/repair'
+import { drawRepairs, repairWindow } from '../services/repair'
+import { DILATE, FEATHER } from '../engine/inpaint'
 import { applyPushes, fieldAt, makeField, type Field } from '../engine/liquify'
 import { displayToSrc, orientedSize, outputSize, warpPoint } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
@@ -16,6 +17,27 @@ import { SunlightHandles } from './SunlightHandles'
 const MAX_ZOOM = 4
 /** Mức phóng khi chạm đúp vào ảnh. */
 const DOUBLE_TAP_ZOOM = 2.5
+/** Kính lúp khi tô bằng ngón tay: cỡ (px), độ phóng, khoảng cách tới ngón tay. */
+const LOUPE = 112
+const LOUPE_ZOOM = 2
+const LOUPE_GAP = 56
+
+/**
+ * Vẽ vùng màn hình (x, y, side × side px) của một canvas đang hiển thị vào kính lúp cỡ size.
+ * Tự cắt phần nằm ngoài canvas (Safari không vẽ gì nếu vùng nguồn vượt ra ngoài).
+ */
+function drawAround(g: CanvasRenderingContext2D, layer: HTMLCanvasElement, x: number, y: number, side: number, size: number) {
+  const r = layer.getBoundingClientRect()
+  if (!r.width || !r.height) return
+  const kx = layer.width / r.width
+  const ky = layer.height / r.height
+  const x0 = Math.max(x, r.left), y0 = Math.max(y, r.top)
+  const x1 = Math.min(x + side, r.right), y1 = Math.min(y + side, r.bottom)
+  if (x1 <= x0 || y1 <= y0) return
+  const k = size / side
+  g.drawImage(layer, (x0 - r.left) * kx, (y0 - r.top) * ky, (x1 - x0) * kx, (y1 - y0) * ky,
+    (x0 - x) * k, (y0 - y) * k, (x1 - x0) * k, (y1 - y0) * k)
+}
 export const brushRadius = (brush: number) => 0.004 + (brush / 100) * 0.026
 export const smoothRadius = (size: number) => 0.01 + (size / 100) * 0.07
 export const eraseRadius = (size: number) => 0.006 + (size / 100) * 0.06
@@ -36,6 +58,16 @@ const brushMode = () => {
   return null
 }
 const isBrushTab = () => !!brushMode()
+
+/** Bề rộng (px ảnh nguồn) mà AI lấp thêm quanh nét tô, theo đúng khung mà repairRegion sẽ dùng. */
+function fillGrow(src: { w: number; h: number; preview: { width: number; height: number } }, strokes: Erase[]) {
+  try {
+    const { factor } = repairWindow(src.preview.width, src.preview.height, strokes)
+    return (DILATE + FEATHER) / factor * (src.w / src.preview.width)
+  } catch {
+    return 0 // vùng tô quá rộng: repairRegion sẽ báo lỗi khi bấm xử lý
+  }
+}
 
 export function Stage() {
   const src = useStore((s) => s.src)
@@ -64,6 +96,7 @@ export function Stage() {
   const frameRef = useRef<HTMLDivElement>(null)
   const ringRef = useRef<HTMLDivElement>(null)
   const paintRef = useRef<HTMLCanvasElement>(null)
+  const loupeRef = useRef<HTMLCanvasElement>(null)
   const R = useRef<Renderer | null>(null)
   const view = useRef({ z: 1, tx: 0, ty: 0, fitW: 0, fitH: 0 })
   const [zoom, setZoomLabel] = useState(1)
@@ -72,35 +105,41 @@ export function Stage() {
   /* ---------- dựng ảnh ---------- */
 
   const drawRef = useRef(() => {})
+  // vẽ ngay (đồng bộ). Kính lúp cần vẽ rồi đọc canvas WebGL trong cùng lượt, vì canvas không giữ bộ đệm.
+  const render = useCallback(() => {
+    const s = getState()
+    if (!R.current || !s.src) return
+    const crop = s.tab === 'crop'
+    // dựng đúng số điểm ảnh màn hình đang cần (theo mức zoom và mật độ điểm ảnh), không vượt quá ảnh preview:
+    // GPU tự thu nhỏ bằng mipmap nên ảnh nét hơn hẳn so với để trình duyệt co canvas
+    const d = dimsRef.current
+    const v = view.current
+    const k = Math.min(1, (v.fitW * v.z * devicePixelRatio) / d.w, 8192 / Math.max(d.w, d.h))
+    const outW = Math.max(1, Math.round(d.w * k))
+    const outH = Math.max(1, Math.round(d.h * k))
+    const split = s.split && !s.hold && !crop ? s.splitX : undefined
+    R.current.draw(s.recipe, { outW, outH, fullFrame: crop, orig: s.hold, split })
+    const overlay = decorationsRef.current
+    if (!overlay) return
+    overlay.hidden = crop || s.hold || !s.recipe.decorations.length
+    if (!overlay.hidden) {
+      if (overlay.width !== outW) overlay.width = outW
+      if (overlay.height !== outH) overlay.height = outH
+      overlay.getContext('2d')!.clearRect(0, 0, outW, outH)
+      drawDecorations(overlay, s.recipe.decorations, split)
+    } else if (overlay.width > 1 || overlay.height > 1) {
+      overlay.width = overlay.height = 1
+    }
+  }, [])
+  const renderRef = useRef(render)
+  renderRef.current = render
   const draw = useCallback(() => {
     if (raf.current) return
     raf.current = requestAnimationFrame(() => {
       raf.current = 0
-      const s = getState()
-      if (!R.current || !s.src) return
-      const crop = s.tab === 'crop'
-      // dựng đúng số điểm ảnh màn hình đang cần (theo mức zoom và mật độ điểm ảnh), không vượt quá ảnh preview:
-      // GPU tự thu nhỏ bằng mipmap nên ảnh nét hơn hẳn so với để trình duyệt co canvas
-      const d = dimsRef.current
-      const v = view.current
-      const k = Math.min(1, (v.fitW * v.z * devicePixelRatio) / d.w, 8192 / Math.max(d.w, d.h))
-      const outW = Math.max(1, Math.round(d.w * k))
-      const outH = Math.max(1, Math.round(d.h * k))
-      const split = s.split && !s.hold && !crop ? s.splitX : undefined
-      R.current.draw(s.recipe, { outW, outH, fullFrame: crop, orig: s.hold, split })
-      const overlay = decorationsRef.current
-      if (!overlay) return
-      overlay.hidden = crop || s.hold || !s.recipe.decorations.length
-      if (!overlay.hidden) {
-        if (overlay.width !== outW) overlay.width = outW
-        if (overlay.height !== outH) overlay.height = outH
-        overlay.getContext('2d')!.clearRect(0, 0, outW, outH)
-        drawDecorations(overlay, s.recipe.decorations, split)
-      } else if (overlay.width > 1 || overlay.height > 1) {
-        overlay.width = overlay.height = 1
-      }
+      render()
     })
-  }, [])
+  }, [render])
 
   drawRef.current = draw
 
@@ -310,6 +349,42 @@ export function Stage() {
       const oy = y - b.top - b.height / 2
       setZoom(z, ox - (ox - v.tx) * (z / v.z), oy - (oy - v.ty) * (z / v.z))
     }
+    let lastLoupe = 0
+    // kính lúp khi tô bằng ngón tay: ngón tay che mất chỗ đang tô, nên hiện vùng dưới ngón tay phóng to phía trên
+    const showLoupe = (x: number, y: number) => {
+      const el = loupeRef.current
+      const main = canvasRef.current
+      const stage = vpRef.current?.parentElement
+      if (!el || !main || !stage || !getState().src) return
+      // khoảng 30 lần mỗi giây là đủ mượt, đỡ tốn pin trên điện thoại
+      const now = performance.now()
+      if (!el.hidden && now - lastLoupe < 33) return
+      lastLoupe = now
+      renderRef.current()
+      const dpr = Math.min(3, devicePixelRatio || 1)
+      const size = Math.round(LOUPE * dpr)
+      if (el.width !== size) el.width = el.height = size
+      const g = el.getContext('2d')!
+      g.fillStyle = '#0d0d0d'
+      g.fillRect(0, 0, size, size)
+      const half = LOUPE / LOUPE_ZOOM / 2
+      for (const layer of [main, decorationsRef.current, paintRef.current]) {
+        if (layer && !layer.hidden && layer.width) drawAround(g, layer, x - half, y - half, half * 2, size)
+      }
+      g.strokeStyle = '#a9d6ff'
+      g.lineWidth = 1.5 * dpr
+      g.beginPath()
+      g.arc(size / 2, size / 2, Math.max(2, (ringPx() / 2) * LOUPE_ZOOM * dpr), 0, Math.PI * 2)
+      g.stroke()
+      const sr = stage.getBoundingClientRect()
+      let top = y - sr.top - LOUPE - LOUPE_GAP
+      if (top < 8) top = y - sr.top + LOUPE_GAP // sát mép trên: đặt kính lúp dưới ngón tay
+      const left = Math.max(8, Math.min(sr.width - LOUPE - 8, x - sr.left - LOUPE / 2))
+      el.style.left = `${left}px`
+      el.style.top = `${top}px`
+      el.hidden = false
+    }
+    const hideLoupe = () => { if (loupeRef.current) loupeRef.current.hidden = true }
     const ringPx = () => {
       const s = getState()
       const fr = frameRef.current!.getBoundingClientRect()
@@ -383,6 +458,7 @@ export function Stage() {
       }
     }
     const endStroke = (cancelSmooth = false) => {
+      hideLoupe()
       if (!stroke) return
       const er = stroke.erase
       stroke = null
@@ -425,6 +501,7 @@ export function Stage() {
             paint(e.clientX, e.clientY)
           } else stroke = null
         } else if (mode === 'spot') dab(e.clientX, e.clientY)
+        if (stroke && e.pointerType === 'touch') showLoupe(e.clientX, e.clientY)
       } else endStroke(true) // ngón thứ hai chạm vào: chuyển sang thu phóng
     }
     const onMove = (e: PointerEvent) => {
@@ -436,6 +513,7 @@ export function Stage() {
       }
       if (!pts.has(e.pointerId)) return
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (stroke && e.pointerType === 'touch') showLoupe(e.clientX, e.clientY)
       if (stroke?.erase) {
         if (Math.hypot(e.clientX - stroke.x, e.clientY - stroke.y) >= Math.max(2, ringPx() * 0.2)) {
           paint(e.clientX, e.clientY)
@@ -584,17 +662,22 @@ export function Stage() {
           {tab === 'sunlight' && recipe.sunlight > 0 && !hold && !split && <SunlightHandles key={src?.id} />}
           {tab === 'create' && !hold && !split && <DecorationHandles key={src?.id} />}
           {selection && <svg className="repair-selection" viewBox={`0 0 ${selection.w} ${selection.h}`} aria-hidden="true">
-            {repairStrokes.map((stroke, i) => {
-              const points: string[] = []
-              for (let j = 0; j < stroke.view.length; j += 2) {
-                points.push(`${stroke.view[j] * selection.w},${stroke.view[j + 1] * selection.h}`)
-              }
-              const diameter = stroke.r * Math.max(src!.w, src!.h) * 2
-              return points.length === 1
-                ? <circle key={i} cx={stroke.view[0] * selection.w} cy={stroke.view[1] * selection.h} r={diameter / 2} fill="currentColor" />
-                : <polyline key={i} points={points.join(' ')} stroke="currentColor" strokeWidth={diameter} fill="none"
-                    strokeLinecap="round" strokeLinejoin="round" />
-            })}
+            {/* quầng nhạt: vùng AI thực sự lấp, rộng hơn nét tô để bắt cả viền mờ và bóng sát vật */}
+            {([['halo', fillGrow(src!, repairStrokes)], ['core', 0]] as const).map(([layer, grow]) => (
+              <g key={layer} className={'repair-' + layer}>
+                {repairStrokes.map((stroke, i) => {
+                  const points: string[] = []
+                  for (let j = 0; j < stroke.view.length; j += 2) {
+                    points.push(`${stroke.view[j] * selection.w},${stroke.view[j + 1] * selection.h}`)
+                  }
+                  const diameter = stroke.r * Math.max(src!.w, src!.h) * 2 + grow * 2
+                  return points.length === 1
+                    ? <circle key={i} cx={stroke.view[0] * selection.w} cy={stroke.view[1] * selection.h} r={diameter / 2} fill="currentColor" />
+                    : <polyline key={i} points={points.join(' ')} stroke="currentColor" strokeWidth={diameter} fill="none"
+                        strokeLinecap="round" strokeLinejoin="round" />
+                })}
+              </g>
+            ))}
           </svg>}
           {cropMode && <CropOverlay />}
           {showSplit && (
@@ -637,6 +720,7 @@ export function Stage() {
         </div>
       </div>
       <div className="brush-ring" ref={ringRef} hidden />
+      <canvas className="loupe" ref={loupeRef} aria-hidden="true" hidden />
 
       <div className="stage-bar">
         {!cropMode && (

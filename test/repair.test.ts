@@ -20,7 +20,7 @@ class FakeWorker {
 }
 ;(globalThis as Record<string, unknown>).Worker = FakeWorker
 
-const { drawRepairs, IDLE_RELEASE, infer, RepairError, repairMessages, repairRegion, repairWindow, resolveModelUrl, RUN_TIMEOUT, STALL_TIMEOUT } =
+const { drawRepairs, IDLE_RELEASE, infer, preloadRepair, RepairError, repairMessages, repairRegion, repairWindow, resolveModelUrl, RUN_TIMEOUT, STALL_TIMEOUT } =
   await import('../src/services/repair.ts')
 
 const SIDE = 512
@@ -200,6 +200,56 @@ describe('infer', () => {
     behave = (req, reply) => reply({ type: 'done', pixels: req.rgba })
     await infer(blank(), blank())
     assert.equal(created, before + 1)
+  })
+})
+
+describe('preloadRepair', () => {
+  test('gửi lệnh tải sẵn, báo tiến độ, xong thì true; lần xử lý sau dùng lại worker', async () => {
+    const seen: string[] = []
+    behave = (req, reply) => {
+      seen.push(req.type)
+      if (req.type === 'load') {
+        reply({ type: 'progress', loaded: 3, total: 8 })
+        reply({ type: 'ready' })
+      } else reply({ type: 'done', pixels: req.rgba })
+    }
+    const before = created
+    const progress: string[] = []
+    assert.equal(await preloadRepair((p) => progress.push(p.phase)), true)
+    await infer(blank(), blank())
+    assert.deepEqual(seen, ['load', 'run'])
+    assert.deepEqual(progress, ['download'])
+    assert.ok(created - before <= 1, 'không tạo worker thứ hai')
+  })
+
+  test('bấm xử lý khi đang tải sẵn: chờ tải xong rồi mới chạy, không giẫm lên nhau', async () => {
+    const order: string[] = []
+    let finishLoad!: () => void
+    behave = (req, reply) => {
+      order.push(`nhận ${req.type}`)
+      if (req.type === 'load') finishLoad = () => { order.push('tải xong'); reply({ type: 'ready' }) }
+      else reply({ type: 'done', pixels: req.rgba })
+    }
+    const loading = preloadRepair()
+    const running = infer(blank(), blank())
+    await new Promise((r) => setImmediate(r))
+    assert.deepEqual(order, ['nhận load'], 'lệnh chạy chưa được gửi khi đang tải')
+    finishLoad()
+    await Promise.all([loading, running])
+    assert.deepEqual(order, ['nhận load', 'tải xong', 'nhận run'])
+  })
+
+  test('tải sẵn lỗi: trả false, không báo lỗi, lần xử lý sau vẫn chạy', async () => {
+    const error = console.error
+    console.error = () => {}
+    try {
+      behave = (_, reply) => reply({ type: 'error', code: 'network', detail: '' })
+      assert.equal(await preloadRepair(), false)
+      behave = (req, reply) => reply({ type: 'done', pixels: req.rgba })
+      assert.equal((await infer(blank(), blank())).length, 512 * 512 * 4)
+    } finally {
+      console.error = error
+    }
   })
 })
 

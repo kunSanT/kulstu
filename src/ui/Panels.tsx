@@ -283,6 +283,8 @@ export function HealPanel() {
   const processing = useStore((s) => s.repairing)
   const progress = useStore((s) => s.repairProgress)
   const busyText = progress === 'running' ? 'AI đang xoá vật thể…' : typeof progress === 'number' ? `Đang tải model AI ${progress}%…` : 'AI đang chạy…'
+  const ready = useStore((s) => s.repairReady)
+  const warming = !processing && typeof progress === 'number'
   return (
     <>
       <div className="chips" role="group" aria-label="Công cụ xoá">
@@ -324,7 +326,7 @@ export function HealPanel() {
             <button type="button" className="chip" disabled={!pending || processing} onClick={clearRepairSelection}>Bỏ vùng tô</button>
           </div>
           <div className="row-between">
-            <span className="count" role="status">{processing ? busyText : pending ? `${pending} nét đã tô` : m ? `Đã xử lý ${m} lần` : ''}</span>
+            <span className="count" role="status">{processing ? busyText : warming ? `Đang tải sẵn AI ${progress}%` : pending ? `${pending} nét đã tô` : m ? `Đã xử lý ${m} lần` : ready ? 'AI đã sẵn sàng' : ''}</span>
             <button type="button" className="chip" disabled={!m || processing} onClick={() => change((r) => ({ ...r, erase: [], repairs: [] }))}>
               Hoàn lại vật thể đã xoá
             </button>
