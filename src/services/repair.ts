@@ -8,7 +8,7 @@ const SIDE = INPAINT_SIDE
 /**
  * Nguồn model: VITE_REPAIR_MODEL_URL nếu có (tệp .onnx hoặc manifest .json có CORS; 'off' để tắt tính năng);
  * mặc định là bản chia phần do chính web phục vụ (public/models/migan, tạo bằng scripts/split-model.mjs),
- * vì tệp 29,5 MB vượt giới hạn 25 MiB mỗi tệp của Cloudflare và Hugging Face không cho tải thẳng (thiếu CORS).
+ * vì Hugging Face không cho tải thẳng (thiếu CORS); tệp lớn hơn 25 MiB phải chia nhỏ cho Cloudflare.
  */
 export function resolveModelUrl(env: { VITE_REPAIR_MODEL_URL?: string; BASE_URL?: string }) {
   const custom = env.VITE_REPAIR_MODEL_URL?.trim()

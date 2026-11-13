@@ -3,9 +3,12 @@
 // trả ảnh RGB uint8 [1,3,H,W]. App luôn đưa vào khung 512×512.
 
 export const INPAINT_SIDE = 512
-/** SHA-256 của migan.onnx (huggingface.co/andraniksargsyan/migan), 29 546 882 byte. */
-export const MODEL_SHA256 = '593eba0b7e04730f1b61c0a3cbca68d97d8d6a7ff5c6a44a7b9d7fcd880fc5ae'
-export const MODEL_BYTES = 29_546_882
+/**
+ * SHA-256 của migan-int8.onnx: migan.onnx (huggingface.co/andraniksargsyan/migan, 29,5 MB) đã nén trọng số
+ * xuống int8 bằng scripts/quantize-model.py (7,7 MB, kết quả gần như không đổi).
+ */
+export const MODEL_SHA256 = '6f642f8dbe4ceccf2c378a639e2ddc144796cef2c7c924a818e3fb8829146041'
+export const MODEL_BYTES = 7_729_442
 /** Ngưỡng alpha của mặt nạ (0–255) để coi là điểm cần lấp. */
 export const MASK_THRESHOLD = 32
 

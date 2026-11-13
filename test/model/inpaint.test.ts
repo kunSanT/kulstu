@@ -1,4 +1,4 @@
-// Chạy model thật. Bỏ qua nếu không có public/models/migan.onnx.
+// Chạy model thật. Bỏ qua nếu không có public/models/migan-int8.onnx.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -6,8 +6,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { INPAINT_SIDE, looksLikeOnnx, MODEL_BYTES, MODEL_SHA256, packInput, unpackOutput } from '../../src/engine/inpaint.ts'
 
-const path = fileURLToPath(new URL('../../public/models/migan.onnx', import.meta.url))
-const skip = !existsSync(path) && 'không có public/models/migan.onnx'
+const path = fileURLToPath(new URL('../../public/models/migan-int8.onnx', import.meta.url))
+const skip = !existsSync(path) && 'không có public/models/migan-int8.onnx'
 
 test('model thật: đúng tệp, lấp lỗ giữa nền cam bằng màu cam', { skip, timeout: 240_000 }, async () => {
   const bytes = readFileSync(path)

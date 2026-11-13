@@ -10,7 +10,7 @@ Web app chỉnh ảnh chân dung ngay trong trình duyệt, ưu tiên điện th
 - Cắt theo tỷ lệ 1:1, 4:5, 9:16 hoặc tự do; xoay, lật
 - Chỉnh sáng, tương phản, bão hòa, nhiệt độ màu; preset màu có cường độ
 - Làm mịn da, xoá mụn, kéo nắn (liquify), chỉnh dáng người
-- Xoá vật thể bằng AI (MI-GAN, chạy bằng ONNX Runtime Web ngay trên máy người dùng, ~3 giây mỗi lần)
+- Xoá vật thể bằng AI (MI-GAN, chạy bằng ONNX Runtime Web ngay trên máy người dùng, ~3 giây mỗi lần, model 7,7 MB)
 - Ghép 2–9 ảnh: đổi chỗ, xoá ảnh, kéo vạch để đổi độ rộng từng ảnh, cân màu theo một ảnh
 - So sánh trước/sau, hoàn tác/làm lại 20 bước, tự lưu bản nháp vào IndexedDB
 - Lưu ảnh: máy tính tải tệp xuống; điện thoại có nút **Lưu vào thư viện ảnh** (iPhone/iPad mở bảng Chia sẻ → Lưu hình ảnh, Android lưu vào Thư viện)
@@ -39,7 +39,7 @@ npm run dev      # mở http://localhost:5173
 | `npm run build:pages` | Build ra `dist-pages/` cho Cloudflare Pages |
 | `npm run preview` | Xem thử bản build |
 | `npm test` | Chạy unit test (~3 giây) |
-| `npm run test:model` | Chạy model MI-GAN thật để kiểm tra (~10 giây, cần `public/models/migan.onnx`) |
+| `npm run test:model` | Chạy model MI-GAN thật để kiểm tra (~10 giây, cần `public/models/migan-int8.onnx`) |
 
 Khi phát triển, mở `/#demo` (hoặc `/#demo-crop`, `/#demo-preset`, `/#demo-skin`, `/#demo-heal`) để vào thẳng ảnh mẫu đã chỉnh.
 
@@ -47,11 +47,11 @@ Khi phát triển, mở `/#demo` (hoặc `/#demo-crop`, `/#demo-preset`, `/#demo
 
 Model nhận diện khuôn mặt, dáng người và tách nền nằm sẵn trong `public/models/`.
 
-Xoá vật thể dùng model MI-GAN của Picsart AI Research (ICCV 2023, giấy phép MIT; bản ONNX `migan.onnx`, ~29,5 MB, từ huggingface.co/andraniksargsyan/migan). Model nhẹ, làm cho điện thoại, đủ tốt cho vật nhỏ. Cloudflare giới hạn 25 MiB mỗi tệp, nên model được chia thành 2 phần trong `public/models/migan/` kèm `manifest.json`. Web tự phục vụ các phần này (cùng tên miền, không cần CORS); trình duyệt tải lần lượt, ghép lại, kiểm tra SHA-256 rồi lưu vào Cache Storage để lần sau không phải tải lại.
+Xoá vật thể dùng model MI-GAN của Picsart AI Research (ICCV 2023, giấy phép MIT; bản ONNX `migan.onnx` 29,5 MB từ huggingface.co/andraniksargsyan/migan). Model nhẹ, làm cho điện thoại, đủ tốt cho vật nhỏ. Trọng số được nén xuống int8 bằng `scripts/quantize-model.py` (còn 7,7 MB, kết quả gần như không đổi) và để trong `public/models/migan/` kèm `manifest.json`. Web tự phục vụ các phần này (cùng tên miền, không cần CORS); trình duyệt tải lần lượt, ghép lại, kiểm tra SHA-256 rồi lưu vào Cache Storage để lần sau không phải tải lại.
 
 Sau khi model lấp, app ghép phần lấp vào ảnh sao cho khó nhận ra (`composeFill` trong `src/engine/inpaint.ts`): nới vùng lấp để phủ viền mờ và bóng sát vật, hoà mép dần vào ảnh gốc, cân màu theo vùng xung quanh và thêm hạt nhiễu cùng cỡ với ảnh.
 
-- **Đổi model**: đặt tệp `.onnx` vào `public/models/` (không đưa lên git) rồi chạy `node scripts/split-model.mjs <tệp> <thư-mục-ra>`.
+- **Đổi model**: đặt tệp `.onnx` vào `public/models/` (không đưa lên git), nén bằng `python scripts/quantize-model.py <vào> <ra>` (cần numpy) rồi chạy `node scripts/split-model.mjs <tệp> <thư-mục-ra>` (tự chia nếu lớn hơn 24 MiB).
 - **Host ở nơi khác**: đặt `VITE_REPAIR_MODEL_URL` (tệp `.onnx` hoặc `manifest.json`, máy chủ phải có CORS) **trước khi build**. Đặt `off` để tắt tính năng.
 
 `public/_headers` bật COOP/COEP để trình duyệt hỗ trợ (Chrome, Edge, Firefox) chạy model nhiều luồng; Safari tự chạy một luồng.
