@@ -245,10 +245,12 @@ function grain(rgba: ArrayLike<number>, pick: (i: number) => boolean, side: numb
  * Tạo mảng vá RGBA từ ảnh vào (input), kết quả model (output) và khoảng cách tới nét tô:
  * 1. Cân màu: đo chênh lệch output so với ảnh gốc trên vành ngay ngoài vùng lấp rồi nội suy mượt vào trong,
  *    để phần lấp liền màu với xung quanh, không lộ mảng sáng/tối.
- * 2. Hạt nhiễu: thêm nhiễu cùng cỡ với ảnh gốc quanh đó, để phần lấp không mịn bất thường.
+ * 2. Hạt nhiễu: thêm nhiễu cùng cỡ với ảnh gốc quanh đó, để phần lấp không mịn bất thường (grainScale = 0 khi mảng vá
+ *    còn bị phóng to: hạt thêm trước khi phóng sẽ thành đốm loang).
  * 3. Alpha: đặc trong vùng nét tô + DILATE, giảm dần qua FEATHER px để hoà vào ảnh gốc.
  */
-export function composeFill(input: ArrayLike<number>, output: Uint8ClampedArray, distance: Float32Array, side = INPAINT_SIDE, seed = 1) {
+export function composeFill(input: ArrayLike<number>, output: Uint8ClampedArray, distance: Float32Array, side = INPAINT_SIDE, seed = 1,
+  grainScale = 1) {
   const area = side * side
   const hole = DILATE + FEATHER
   // 1. cân màu
@@ -271,7 +273,7 @@ export function composeFill(input: ArrayLike<number>, output: Uint8ClampedArray,
   // 2. hạt nhiễu
   const want = grain(input, (i) => distance[i] > hole && distance[i] <= hole + RING * 2, side)
   const have = grain(output, (i) => distance[i] <= hole, side)
-  const amount = Math.min(MAX_GRAIN, Math.sqrt(Math.max(0, want * want - have * have)))
+  const amount = Math.min(MAX_GRAIN, Math.sqrt(Math.max(0, want * want - have * have))) * Math.max(0, Math.min(1, grainScale))
   let state = (seed >>> 0) || 1
   const rnd = () => {
     state = (state * 1664525 + 1013904223) >>> 0

@@ -243,7 +243,6 @@ a.mark:hover { color: var(--ice); }
 }
 .decoration-trash[data-over='true'] { background: var(--err); color: var(--black); }
 .repair-selection { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; color: #a9d6ff; opacity: .5; }
-.repair-halo { opacity: .4; }
 .stage.heal .frame { cursor: none; }
 .stage.heal.panning .frame { cursor: grab; }
 

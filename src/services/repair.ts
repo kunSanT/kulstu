@@ -65,6 +65,9 @@ export async function drawRepairs(canvas: HTMLCanvasElement, patches: RepairPatc
     return image
   }))
   const g = canvas.getContext('2d')!
+  // mảng vá thường được phóng to (vùng lớn, hoặc khi xuất ảnh cỡ gốc): làm mượt chất lượng cao để không bị nhoè răng cưa
+  g.imageSmoothingEnabled = true
+  g.imageSmoothingQuality = 'high'
   patches.forEach((patch, i) => g.drawImage(images[i], patch.x * canvas.width, patch.y * canvas.height,
     patch.w * canvas.width, patch.h * canvas.height))
 }
@@ -217,7 +220,8 @@ export async function repairRegion(source: HTMLCanvasElement, strokes: Erase[], 
   const original = input.slice()
   const pixels = await infer(input, holeMask(distance, SIDE), onProgress)
   const seed = Math.round((strokes[0]?.pts[0] ?? 0) * 65535) * 31 + Math.round((strokes[0]?.pts[1] ?? 0) * 65535)
-  composeFill(original, pixels, distance, SIDE, seed)
+  // vùng lớn bị thu nhỏ rồi mảng vá sẽ phóng to lại: không thêm hạt (hạt bị phóng thành đốm loang)
+  composeFill(original, pixels, distance, SIDE, seed, factor >= .99 ? 1 : 0)
   g.putImageData(new ImageData(pixels, SIDE, SIDE), 0, 0)
   const patch = document.createElement('canvas')
   patch.width = dw

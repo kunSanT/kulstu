@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { applyErases, type Erase } from '../engine/erase'
+import { applyErases } from '../engine/erase'
 import { applySpots } from '../engine/heal'
 import { brushMask } from '../engine/smoothBrush'
 import { drawDecorations } from '../engine/decorations'
-import { drawRepairs, repairWindow } from '../services/repair'
-import { DILATE, FEATHER } from '../engine/inpaint'
+import { drawRepairs } from '../services/repair'
 import { applyPushes, fieldAt, makeField, type Field } from '../engine/liquify'
 import { displayToSrc, orientedSize, outputSize, warpPoint } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
@@ -58,16 +57,6 @@ const brushMode = () => {
   return null
 }
 const isBrushTab = () => !!brushMode()
-
-/** Bề rộng (px ảnh nguồn) mà AI lấp thêm quanh nét tô, theo đúng khung mà repairRegion sẽ dùng. */
-function fillGrow(src: { w: number; h: number; preview: { width: number; height: number } }, strokes: Erase[]) {
-  try {
-    const { factor } = repairWindow(src.preview.width, src.preview.height, strokes)
-    return (DILATE + FEATHER) / factor * (src.w / src.preview.width)
-  } catch {
-    return 0 // vùng tô quá rộng: repairRegion sẽ báo lỗi khi bấm xử lý
-  }
-}
 
 export function Stage() {
   const src = useStore((s) => s.src)
@@ -662,22 +651,17 @@ export function Stage() {
           {tab === 'sunlight' && recipe.sunlight > 0 && !hold && !split && <SunlightHandles key={src?.id} />}
           {tab === 'create' && !hold && !split && <DecorationHandles key={src?.id} />}
           {selection && <svg className="repair-selection" viewBox={`0 0 ${selection.w} ${selection.h}`} aria-hidden="true">
-            {/* quầng nhạt: vùng AI thực sự lấp, rộng hơn nét tô để bắt cả viền mờ và bóng sát vật */}
-            {([['halo', fillGrow(src!, repairStrokes)], ['core', 0]] as const).map(([layer, grow]) => (
-              <g key={layer} className={'repair-' + layer}>
-                {repairStrokes.map((stroke, i) => {
-                  const points: string[] = []
-                  for (let j = 0; j < stroke.view.length; j += 2) {
-                    points.push(`${stroke.view[j] * selection.w},${stroke.view[j + 1] * selection.h}`)
-                  }
-                  const diameter = stroke.r * Math.max(src!.w, src!.h) * 2 + grow * 2
-                  return points.length === 1
-                    ? <circle key={i} cx={stroke.view[0] * selection.w} cy={stroke.view[1] * selection.h} r={diameter / 2} fill="currentColor" />
-                    : <polyline key={i} points={points.join(' ')} stroke="currentColor" strokeWidth={diameter} fill="none"
-                        strokeLinecap="round" strokeLinejoin="round" />
-                })}
-              </g>
-            ))}
+            {repairStrokes.map((stroke, i) => {
+              const points: string[] = []
+              for (let j = 0; j < stroke.view.length; j += 2) {
+                points.push(`${stroke.view[j] * selection.w},${stroke.view[j + 1] * selection.h}`)
+              }
+              const diameter = stroke.r * Math.max(src!.w, src!.h) * 2
+              return points.length === 1
+                ? <circle key={i} cx={stroke.view[0] * selection.w} cy={stroke.view[1] * selection.h} r={diameter / 2} fill="currentColor" />
+                : <polyline key={i} points={points.join(' ')} stroke="currentColor" strokeWidth={diameter} fill="none"
+                    strokeLinecap="round" strokeLinejoin="round" />
+            })}
           </svg>}
           {cropMode && <CropOverlay />}
           {showSplit && (
