@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { composeFill, DILATE, distanceToMask, FEATHER, holeMask, looksLikeOnnx, packInput, unpackOutput } from '../src/engine/inpaint.ts'
+import { composeFill, DILATE, distanceToMask, FEATHER, growToObject, holeMask, looksLikeOnnx, packInput, unpackOutput } from '../src/engine/inpaint.ts'
 
 const side = 4
 const area = side * side
@@ -173,3 +173,51 @@ test('looksLikeOnnx: phân biệt model và trang HTML máy chủ trả nhầm',
   assert.equal(looksLikeOnnx(new TextEncoder().encode('<!doctype html>')), false)
   assert.equal(looksLikeOnnx(new Uint8Array()), false)
 })
+
+describe('growToObject: tự nới vùng xoá phủ phần vật tô hụt', () => {
+  const S = 128, c = 64
+  const scene = (paint: (x: number, y: number) => [number, number, number]) => {
+    const a = new Uint8ClampedArray(S * S * 4)
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) a.set([...paint(x, y), 255], (y * S + x) * 4)
+    return a
+  }
+  const disc = (r: number) => {
+    const m = new Uint8ClampedArray(S * S * 4)
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) if (Math.hypot(x - c, y - c) <= r) m[(y * S + x) * 4 + 3] = 255
+    return m
+  }
+  const on = (m: Uint8ClampedArray, x: number, y: number) => m[(y * S + x) * 4 + 3] === 255
+  const blue: [number, number, number] = [60, 80, 120], dark: [number, number, number] = [25, 20, 18], skin: [number, number, number] = [220, 175, 150]
+
+  test('vật tối lớn hơn nét tô trên nền xanh: vùng xoá nới ra phủ hết vật, không lan ra nền', () => {
+    const img = scene((x, y) => (Math.hypot(x - c, y - c) <= 18 ? dark : blue))
+    const grown = growToObject(img, disc(10), S)
+    assert.ok(on(grown, c + 17, c), 'mép vật được phủ')
+    assert.ok(on(grown, c, c - 17))
+    assert.ok(!on(grown, c + 21, c), 'nền ngoài vật giữ nguyên')
+  })
+
+  test('lọn tóc đen sát má: phủ phần tóc, không lấn vào da', () => {
+    const img = scene((x) => (x < 58 ? skin : x < 76 ? dark : blue))
+    const grown = growToObject(img, disc(5), S)
+    assert.ok(on(grown, 72, c), 'phần tóc ngoài nét tô được phủ')
+    assert.ok(!on(grown, 54, c), 'không ăn vào da')
+  })
+
+  test('không lan quá GROW_REACH', () => {
+    const img = scene((x, y) => (Math.abs(y - c) <= 4 ? dark : blue)) // vạch tối dài hết khung
+    const grown = growToObject(img, disc(4), S, 24)
+    assert.ok(on(grown, c + 20, c))
+    assert.ok(!on(grown, c + 40, c))
+  })
+
+  test('nét tô toàn nền (không có vật) hoặc nền loang lổ: giữ nguyên nét tô', () => {
+    const plain = growToObject(scene(() => blue), disc(8), S)
+    assert.deepEqual(plain, disc(8).map((v, i) => (i % 4 === 3 ? v : 0)))
+    let s = 3
+    const noisy = scene(() => { s = (s * 1664525 + 1013904223) >>> 0; const v = s >>> 24; return [v, 255 - v, v] })
+    const kept = growToObject(noisy, disc(8), S)
+    assert.ok(!on(kept, c + 12, c))
+  })
+})
+
