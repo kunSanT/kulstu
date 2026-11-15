@@ -4,10 +4,14 @@ import mjs from 'onnxruntime-web/ort-wasm-simd-threaded.mjs?url'
 import { INPAINT_SIDE, packInput, unpackOutput } from '../engine/inpaint'
 import { loadModel, ModelError, type ModelSpec } from './modelLoader'
 
-export type RepairRequest = { rgba: Uint8ClampedArray<ArrayBuffer>; mask: Uint8ClampedArray<ArrayBuffer>; model: ModelSpec }
+export type RepairRequest =
+  | { type: 'run'; rgba: Uint8ClampedArray<ArrayBuffer>; mask: Uint8ClampedArray<ArrayBuffer>; model: ModelSpec }
+  /** Tải sẵn model khi người dùng vừa chọn công cụ, để lúc bấm xử lý không phải chờ. */
+  | { type: 'load'; model: ModelSpec }
 export type RepairReply =
   | { type: 'progress'; loaded: number; total: number }
   | { type: 'running' }
+  | { type: 'ready' }
   | { type: 'done'; pixels: Uint8ClampedArray<ArrayBuffer> }
   | { type: 'error'; code: 'missing' | 'network' | 'corrupt' | 'memory' | 'run'; detail: string }
 
@@ -33,12 +37,18 @@ const post = (reply: RepairReply, transfer: Transferable[] = []) => self.postMes
 
 self.addEventListener('message', async (event: MessageEvent<RepairRequest>) => {
   try {
-    const { rgba, mask, model } = event.data
-    const { image, keep } = packInput(rgba, mask)
-    session ??= createSession(model).catch((error) => {
+    const request = event.data
+    session ??= createSession(request.model).catch((error) => {
       session = undefined
       throw error
     })
+    if (request.type === 'load') {
+      await session
+      post({ type: 'ready' })
+      return
+    }
+    const { rgba, mask } = request
+    const { image, keep } = packInput(rgba, mask)
     const engine = await session
     post({ type: 'running' })
     const outputs = await engine.run({

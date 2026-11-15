@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { applyErases, MAX_ERASES, type Erase } from './engine/erase'
 import { applySpots } from './engine/heal'
-import { drawRepairs, RepairError, repairRegion } from './services/repair'
+import { drawRepairs, preloadRepair, RepairError, repairRegion } from './services/repair'
 import { detectPlatform, saveImage, savedMessage, type SaveResult } from './services/save'
 import type { Push } from './engine/liquify'
 import { freshRecipe, MAX_PUSHES, MAX_SPOTS, requiresFace, usesBody, usesFace, usesHair, usesPersonMask, type AdjKey, type Body, type Features, type Recipe, type Spot } from './engine/recipe'
@@ -51,6 +51,8 @@ type State = {
   repairing: boolean
   /** Tiến độ AI: phần trăm tải model (0–100), hoặc 'running' khi đang chạy. */
   repairProgress: number | 'running' | null
+  /** Model xoá vật thể đã tải sẵn và nạp xong (sau khi chọn công cụ). */
+  repairReady: boolean
   /** Cỡ cọ xoá vật thể, 1–100. */
   eraseSize: number
   /** Cỡ cọ kéo nắn, 1–100. */
@@ -85,6 +87,7 @@ let state: State = {
   repairStrokes: [],
   repairing: false,
   repairProgress: null,
+  repairReady: false,
   eraseSize: 40,
   pushSize: 45,
   body: { status: 'idle', data: null },
@@ -165,6 +168,8 @@ function go(d: number) {
 }
 export const undo = () => go(-1)
 export const redo = () => go(1)
+/** Quay về một bước bất kỳ trong lịch sử (bước 0 là ảnh gốc). */
+export const jumpTo = (n: number) => go(n - state.hi)
 
 /** Thêm một điểm xoá mụn trong lúc đang lướt; cả nét lướt được chốt thành một bước bằng commit(). */
 export function addSpot(s: Spot): boolean {
@@ -188,7 +193,21 @@ export const setPushSize = (pushSize: number) => set({ pushSize })
 export const setSmoothSize = (smoothSize: number) => set({ smoothSize })
 export const setSkinBrush = (skinBrush: boolean) => set({ skinBrush })
 export const setEraseSize = (eraseSize: number) => set({ eraseSize })
-export const setHealTool = (healTool: State['healTool']) => set({ healTool, repairStrokes: [] })
+export function setHealTool(healTool: State['healTool']) {
+  set({ healTool, repairStrokes: [] })
+  if (healTool === 'object') void warmRepair()
+}
+
+/** Tải sẵn model khi chọn công cụ xoá vật thể, để lúc tô xong bấm xử lý là chạy ngay. */
+async function warmRepair() {
+  if (state.repairReady || state.repairing) return
+  const progress = (p: { phase: string; loaded?: number; total?: number }) => {
+    if (state.repairing) return // đang xử lý thật: để runRepair báo tiến độ
+    set({ repairProgress: p.phase === 'download' && p.total ? Math.min(100, Math.round((p.loaded ?? 0) / p.total * 100)) : null })
+  }
+  const ready = await preloadRepair(progress)
+  if (!state.repairing) set({ repairProgress: null, repairReady: ready })
+}
 export const setHold = (hold: boolean) => state.hold !== hold && set({ hold })
 export const setSplit = (split: boolean) => set({ split })
 export const setSplitX = (splitX: number) => set({ splitX: Math.min(1, Math.max(0, splitX)) })
@@ -455,7 +474,7 @@ export async function runRepair() {
     }
     toast(error instanceof Error ? error.message : 'AI chưa xử lý được. Hãy thử lại.', { err: true })
   } finally {
-    set({ repairing: false, repairProgress: null })
+    set({ repairing: false, repairProgress: null, repairReady: !!state.recipe.repairs.length || state.repairReady })
   }
 }
 

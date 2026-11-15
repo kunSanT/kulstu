@@ -51,9 +51,28 @@ class Context2D {
   readonly canvas: FakeCanvas
   constructor(canvas: FakeCanvas) { this.canvas = canvas }
 
+  // vùng cắt hình chữ nhật bo góc (đủ cho roundRect + clip)
+  private clipBox: { x: number; y: number; w: number; h: number; r: number } | null = null
+  private saved: (typeof this.clipBox)[] = []
+  private box: typeof this.clipBox = null
+  save() { this.saved.push(this.clipBox) }
+  restore() { this.clipBox = this.saved.pop() ?? null }
+  rect(x: number, y: number, w: number, h: number) { this.box = { x, y, w, h, r: 0 } }
+  roundRect(x: number, y: number, w: number, h: number, r: number) { this.box = { x, y, w, h, r } }
+  clip() { this.clipBox = this.box }
+  private inClip(px: number, py: number) {
+    const c = this.clipBox
+    if (!c) return true
+    const x = px + .5, y = py + .5
+    if (x < c.x || y < c.y || x > c.x + c.w || y > c.y + c.h) return false
+    const cx = Math.min(Math.max(x, c.x + c.r), c.x + c.w - c.r)
+    const cy = Math.min(Math.max(y, c.y + c.r), c.y + c.h - c.r)
+    return (x - cx) ** 2 + (y - cy) ** 2 <= c.r * c.r
+  }
+
   private blend(x: number, y: number, [r, g, b, a]: ArrayLike<number>) {
     const c = this.canvas
-    if (x < 0 || y < 0 || x >= c.width || y >= c.height || !a) return
+    if (x < 0 || y < 0 || x >= c.width || y >= c.height || !a || !this.inClip(x, y)) return
     const i = (y * c.width + x) * 4
     const d = c.pixels
     const sa = (a / 255) * this.globalAlpha
@@ -119,11 +138,9 @@ class Context2D {
     }
   }
 
-  beginPath() { this.path = [] }
+  beginPath() { this.path = []; this.box = null }
   moveTo(x: number, y: number) { this.path.push([[x, y]]) }
   lineTo(x: number, y: number) { (this.path.at(-1) ?? (this.path[0] = [])).push([x, y]) }
-  save() {}
-  restore() {}
   translate() {}
   rotate() {}
   scale() {}

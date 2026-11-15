@@ -2,13 +2,13 @@ import type { Erase } from '../engine/erase'
 import { composeFill, distanceToMask, holeMask, INPAINT_SIDE, MODEL_SHA256 } from '../engine/inpaint'
 import type { RepairPatch } from '../engine/recipe'
 import type { ModelSpec } from './modelLoader'
-import type { RepairReply } from './repair.worker'
+import type { RepairReply, RepairRequest } from './repair.worker'
 
 const SIDE = INPAINT_SIDE
 /**
  * Nguồn model: VITE_REPAIR_MODEL_URL nếu có (tệp .onnx hoặc manifest .json có CORS; 'off' để tắt tính năng);
  * mặc định là bản chia phần do chính web phục vụ (public/models/migan, tạo bằng scripts/split-model.mjs),
- * vì tệp 29,5 MB vượt giới hạn 25 MiB mỗi tệp của Cloudflare và Hugging Face không cho tải thẳng (thiếu CORS).
+ * vì Hugging Face không cho tải thẳng (thiếu CORS); tệp lớn hơn 25 MiB phải chia nhỏ cho Cloudflare.
  */
 export function resolveModelUrl(env: { VITE_REPAIR_MODEL_URL?: string; BASE_URL?: string }) {
   const custom = env.VITE_REPAIR_MODEL_URL?.trim()
@@ -71,11 +71,33 @@ export async function drawRepairs(canvas: HTMLCanvasElement, patches: RepairPatc
 
 export type RepairProgress = { phase: 'download'; loaded: number; total: number } | { phase: 'running' }
 
-export function infer(rgba: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedArray<ArrayBuffer>,
-  onProgress: (progress: RepairProgress) => void = () => {}, model: ModelSpec = { url: new URL(modelUrl, location.href).href, sha256: MODEL_SHA256 }) {
+const defaultModel = (): ModelSpec => ({ url: new URL(modelUrl, location.href).href, sha256: MODEL_SHA256 })
+
+// Các việc gửi cho worker chạy lần lượt (tải sẵn rồi mới xử lý), vì worker chỉ có một bộ nhận tin.
+let queue: Promise<unknown> = Promise.resolve()
+function enqueue<T>(job: () => Promise<T>): Promise<T> {
+  const next = queue.then(job, job)
+  queue = next.catch(() => undefined)
+  return next
+}
+
+function armIdle(job: Worker, ms: number) {
+  clearTimeout(idleTimer)
+  idleTimer = setTimeout(() => {
+    if (worker !== job) return
+    job.terminate()
+    worker = null
+  }, ms)
+  // Node (khi chạy test): hẹn giờ này không giữ tiến trình lại; trình duyệt không có unref
+  ;(idleTimer as { unref?: () => void } | undefined)?.unref?.()
+}
+
+/** Gửi một việc cho worker, chờ tới khi xong ('done' hoặc 'ready'); quá hạn hay lỗi thì huỷ worker. */
+function talk<T>(request: RepairRequest, transfer: Transferable[], onProgress: (progress: RepairProgress) => void,
+  settle: (reply: Extract<RepairReply, { type: 'done' | 'ready' }>, job: Worker) => T) {
   clearTimeout(idleTimer)
   const job = worker ??= createWorker()
-  return new Promise<Uint8ClampedArray<ArrayBuffer>>((resolve, reject) => {
+  return new Promise<T>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined
     const arm = (ms: number, reason: keyof typeof repairMessages) => {
       clearTimeout(timer)
@@ -101,23 +123,39 @@ export function infer(rgba: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedAr
       } else if (data.type === 'running') {
         arm(RUN_TIMEOUT, 'timeout')
         onProgress({ phase: 'running' })
-      } else if (data.type === 'done') {
+      } else if (data.type === 'done' || data.type === 'ready') {
         finish()
-        idleTimer = setTimeout(() => {
-          if (worker !== job) return
-          job.terminate()
-          worker = null
-        }, IDLE_RELEASE)
-        // Node (khi chạy test): hẹn giờ này không giữ tiến trình lại; trình duyệt không có unref
-        ;(idleTimer as { unref?: () => void } | undefined)?.unref?.()
-        resolve(data.pixels)
+        resolve(settle(data, job))
       } else {
         fail(data.code, data.detail)
       }
     }
     job.onerror = (event) => fail('worker', String((event as Partial<ErrorEvent>).message ?? 'worker error'))
-    job.postMessage({ rgba, mask, model }, [rgba.buffer, mask.buffer])
+    job.postMessage(request, transfer)
   })
+}
+
+export function infer(rgba: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedArray<ArrayBuffer>,
+  onProgress: (progress: RepairProgress) => void = () => {}, model: ModelSpec = defaultModel()) {
+  return enqueue(() => talk({ type: 'run', rgba, mask, model }, [rgba.buffer, mask.buffer], onProgress, (reply, job) => {
+    armIdle(job, IDLE_RELEASE)
+    return (reply as Extract<RepairReply, { type: 'done' }>).pixels
+  }))
+}
+
+/** Thời gian giữ model đã tải sẵn khi chưa dùng tới (người dùng còn đang tô). */
+export const PRELOAD_KEEP = 5 * 60_000
+
+/**
+ * Tải sẵn model khi người dùng vừa chọn công cụ xoá vật thể. Lỗi ở đây không báo (lần xử lý thật sẽ thử lại và báo);
+ * trả về true nếu model đã sẵn sàng.
+ */
+export function preloadRepair(onProgress: (progress: RepairProgress) => void = () => {}, model: ModelSpec = defaultModel()) {
+  if (!repairAvailable) return Promise.resolve(false)
+  return enqueue(() => talk({ type: 'load', model }, [], onProgress, (_, job) => {
+    armIdle(job, PRELOAD_KEEP)
+    return true
+  })).catch(() => false)
 }
 
 /**
