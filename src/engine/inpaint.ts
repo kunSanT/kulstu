@@ -45,7 +45,7 @@ export const looksLikeOnnx = (head: Uint8Array) => head.length > 0 && head[0] ==
 /* ---------- ghép phần lấp sao cho khó nhận ra ---------- */
 
 /** Nới mặt nạ thêm DILATE px (cỡ khung 512) để phủ cả viền mờ, bóng sát vật; FEATHER px tiếp theo hoà dần vào ảnh gốc. */
-export const DILATE = 6
+export const DILATE = 8
 export const FEATHER = 8
 /** Vành ảnh gốc ngay ngoài vùng lấp dùng để cân màu và đo hạt nhiễu. */
 const RING = 10
@@ -83,6 +83,97 @@ export function distanceToMask(mask: ArrayLike<number>, side = INPAINT_SIDE, str
     d[i] = v
   }
   return d
+}
+
+type Cluster = { center: number[]; count: number }
+const rgbDist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+function nearestCenter(clusters: Cluster[], c: number[]) {
+  let best = clusters[0]
+  for (const k of clusters) if (rgbDist(c, k.center) < rgbDist(c, best.center)) best = k
+  return best
+}
+/** Gom màu thành k cụm (k-means, vài vòng, khởi tạo cố định nên kết quả luôn như nhau). */
+function kmeans(colors: number[][], k: number): Cluster[] {
+  const clusters: Cluster[] = Array.from({ length: Math.min(k, colors.length) }, (_, i) =>
+    ({ center: [...colors[Math.floor(i * colors.length / k)]], count: 0 }))
+  for (let iter = 0; iter < 8; iter++) {
+    const sum = clusters.map(() => [0, 0, 0, 0])
+    for (const c of colors) {
+      const j = clusters.indexOf(nearestCenter(clusters, c))
+      sum[j][0] += c[0]; sum[j][1] += c[1]; sum[j][2] += c[2]; sum[j][3]++
+    }
+    clusters.forEach((cl, j) => {
+      cl.count = sum[j][3]
+      if (cl.count) cl.center = [sum[j][0] / cl.count, sum[j][1] / cl.count, sum[j][2] / cl.count]
+    })
+  }
+  return clusters
+}
+
+/** Khoảng tối đa (px khung 512) mà vùng xoá tự nới ra để phủ phần vật người dùng tô chưa kín. */
+export const GROW_REACH = 24
+const BG_BAND = 12
+
+/**
+ * Tự nới nét tô ra phủ cả phần vật nằm sát bên ngoài (người dùng hay tô hụt mép, sót lọn tóc, sót bóng).
+ * Màu nền lấy ở vành cách nét tô GROW_REACH px (gom thành vài cụm màu); màu vật lấy từ các điểm trong nét tô khác hẳn nền.
+ * Lan từ nét tô sang điểm liền kề nếu điểm đó khác màu nền VÀ giống màu vật hơn màu nền, trong phạm vi reach px,
+ * nên không ăn sang vùng khác màu (vd. xoá lọn tóc đen sát má sẽ không lấn vào da).
+ * Trả mặt nạ RGBA mới (alpha 255 = cần lấp); nền quá loang lổ thì giữ nguyên nét tô.
+ */
+export function growToObject(rgba: ArrayLike<number>, stroke: ArrayLike<number>, side = INPAINT_SIDE, reach = GROW_REACH) {
+  const area = side * side
+  const out = new Uint8ClampedArray(area * 4)
+  for (let i = 0; i < area; i++) if (stroke[i * 4 + 3] > MASK_THRESHOLD) out[i * 4 + 3] = 255
+  const d = distanceToMask(stroke, side)
+  const col = (i: number) => [rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]]
+  const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  // màu nền: vành ngoài có thể gồm vài vùng (vd. da và phông nền) nên gom thành tối đa 3 cụm màu
+  const ring: number[][] = []
+  const interior: number[][] = []
+  for (let i = 0; i < area; i++) {
+    if (d[i] === 0) interior.push(col(i))
+    else if (d[i] > reach && d[i] <= reach + BG_BAND) ring.push(col(i))
+  }
+  if (ring.length < 32 || interior.length < 8) return out
+  const bgAll = kmeans(ring, 3)
+  const dominant = bgAll.reduce((a, b) => (b.count > a.count ? b : a))
+  // màu vật: cụm trong nét tô khác màu nền chính nhất
+  const obj = kmeans(interior, 2).reduce((a, b) => (dist(b.center, dominant.center) > dist(a.center, dominant.center) ? b : a))
+  if (obj.count < Math.max(8, interior.length * .05)) return out
+  // vật dài (lọn tóc, vạch kẻ) cắt ngang vành nền: bỏ cụm nền trùng màu vật nếu nó chỉ chiếm phần nhỏ vành
+  const bg = bgAll.filter((c) => c.count && !(dist(c.center, obj.center) < 40 && c.count < ring.length * .4))
+  if (!bg.length) return out
+  const toBg = (c: number[]) => Math.min(...bg.map((k) => dist(c, k.center)))
+  let spread = 0, counted = 0
+  for (const c of ring) {
+    const own = nearestCenter(bgAll, c)
+    if (!bg.includes(own)) continue
+    spread += dist(c, own.center) ** 2
+    counted++
+  }
+  spread = Math.sqrt(spread / Math.max(1, counted))
+  const differs = Math.max(18, spread * 2.5)
+  if (differs > 90) return out // nền quá loang lổ: không đoán được đâu là vật
+  if (toBg(obj.center) <= differs) return out // vật cùng màu nền: không phân biệt được
+  const objColor = obj.center
+  // lan từ nét tô theo 4 hướng
+  const queue: number[] = []
+  for (let i = 0; i < area; i++) if (d[i] === 0) queue.push(i)
+  for (let q = 0; q < queue.length; q++) {
+    const i = queue[q]
+    const x = i % side
+    for (const j of [x > 0 ? i - 1 : -1, x < side - 1 ? i + 1 : -1, i - side, i + side]) {
+      if (j < 0 || j >= area || out[j * 4 + 3] || d[j] > reach) continue
+      const c = col(j)
+      const fromBg = toBg(c)
+      if (fromBg > differs && dist(c, objColor) < fromBg) {
+        out[j * 4 + 3] = 255
+        queue.push(j)
+      }
+    }
+  }
+  return out
 }
 
 /** Mặt nạ đưa cho model (RGBA, alpha 255/0): nét tô nới thêm DILATE + FEATHER px. */

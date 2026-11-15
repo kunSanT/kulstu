@@ -1,5 +1,5 @@
 import type { Erase } from '../engine/erase'
-import { composeFill, distanceToMask, holeMask, INPAINT_SIDE, MODEL_SHA256 } from '../engine/inpaint'
+import { composeFill, distanceToMask, growToObject, holeMask, INPAINT_SIDE, MODEL_SHA256 } from '../engine/inpaint'
 import type { RepairPatch } from '../engine/recipe'
 import type { ModelSpec } from './modelLoader'
 import type { RepairReply, RepairRequest } from './repair.worker'
@@ -212,7 +212,8 @@ export async function repairRegion(source: HTMLCanvasElement, strokes: Erase[], 
     g.stroke()
   }
   // nới mặt nạ để phủ cả viền mờ và bóng sát vật; phần nới thêm được hoà dần vào ảnh gốc
-  const distance = distanceToMask(g.getImageData(0, 0, SIDE, SIDE).data, SIDE)
+  // tự nới nét tô ra phủ phần vật bị tô hụt; không thì AI lấp bằng chính màu vật còn sót, vật bị kéo nhoè ra
+  const distance = distanceToMask(growToObject(input, g.getImageData(0, 0, SIDE, SIDE).data, SIDE), SIDE)
   const original = input.slice()
   const pixels = await infer(input, holeMask(distance, SIDE), onProgress)
   const seed = Math.round((strokes[0]?.pts[0] ?? 0) * 65535) * 31 + Math.round((strokes[0]?.pts[1] ?? 0) * 65535)
