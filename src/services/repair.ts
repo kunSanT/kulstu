@@ -2,6 +2,7 @@ import type { Erase } from '../engine/erase'
 import { composeFill, distanceToMask, growToObject, holeMask, INPAINT_SIDE, MODEL_SHA256 } from '../engine/inpaint'
 import type { RepairPatch } from '../engine/recipe'
 import type { ModelSpec } from './modelLoader'
+import { inferOnServer, ServerEraseError, serverEraseEnabled } from './serverRepair'
 import type { RepairReply, RepairRequest } from './repair.worker'
 
 const SIDE = INPAINT_SIDE
@@ -187,6 +188,27 @@ export function repairWindow(width: number, height: number, strokes: Erase[]) {
   return { x, y, w, h, dw: Math.round(w * factor), dh: Math.round(h * factor), factor, long }
 }
 
+/** Xoá vật thể thử AI trên máy chủ trước (mặc định ở bản build). */
+export const useServer = serverEraseEnabled(import.meta.env)
+let serverDown = false
+
+/**
+ * Lấp khung 512: thử AI trên máy chủ trước (đẹp hơn với vật lớn, nền nhiều chi tiết); máy chủ lỗi, quá tải hay hết lượt
+ * thì dùng AI trên máy. Máy chủ hỏng hẳn (không có API) thì không thử lại trong phiên này.
+ */
+async function fill(input: Uint8ClampedArray<ArrayBuffer>, mask: Uint8ClampedArray<ArrayBuffer>, onProgress?: (progress: RepairProgress) => void) {
+  if (useServer && !serverDown) {
+    try {
+      onProgress?.({ phase: 'running' })
+      return new Uint8ClampedArray(await inferOnServer(input, mask, SIDE)) as Uint8ClampedArray<ArrayBuffer>
+    } catch (error) {
+      if (error instanceof ServerEraseError && (error.status === 404 || error.status === 405)) serverDown = true
+      console.warn('KulStu: AI máy chủ chưa xử lý được, chuyển sang AI trên máy.', error)
+    }
+  }
+  return infer(input, mask, onProgress)
+}
+
 export async function repairRegion(source: HTMLCanvasElement, strokes: Erase[], onProgress?: (progress: RepairProgress) => void): Promise<RepairPatch> {
   const { width, height } = source
   const { x, y, w, h, dw, dh, factor, long } = repairWindow(width, height, strokes)
@@ -218,7 +240,7 @@ export async function repairRegion(source: HTMLCanvasElement, strokes: Erase[], 
   // tự nới nét tô ra phủ phần vật bị tô hụt; không thì AI lấp bằng chính màu vật còn sót, vật bị kéo nhoè ra
   const distance = distanceToMask(growToObject(input, g.getImageData(0, 0, SIDE, SIDE).data, SIDE), SIDE)
   const original = input.slice()
-  const pixels = await infer(input, holeMask(distance, SIDE), onProgress)
+  const pixels = await fill(input, holeMask(distance, SIDE), onProgress)
   const seed = Math.round((strokes[0]?.pts[0] ?? 0) * 65535) * 31 + Math.round((strokes[0]?.pts[1] ?? 0) * 65535)
   // vùng lớn bị thu nhỏ rồi mảng vá sẽ phóng to lại: không thêm hạt (hạt bị phóng thành đốm loang)
   composeFill(original, pixels, distance, SIDE, seed, factor >= .99 ? 1 : 0)

@@ -10,7 +10,7 @@ Web app chỉnh ảnh chân dung ngay trong trình duyệt, ưu tiên điện th
 - Cắt theo tỷ lệ 1:1, 4:5, 9:16 hoặc tự do; xoay, lật
 - Chỉnh sáng, tương phản, bão hòa, nhiệt độ màu; preset màu có cường độ
 - Làm mịn da, xoá mụn, kéo nắn (liquify), chỉnh dáng người
-- Xoá vật thể bằng AI (MI-GAN, chạy bằng ONNX Runtime Web ngay trên máy người dùng, ~3 giây mỗi lần, model 7,7 MB)
+- Xoá vật thể bằng AI: mặc định AI trên máy chủ (Cloudflare Workers AI, Stable Diffusion Inpainting); máy chủ lỗi thì dùng AI trên máy (MI-GAN, ONNX Runtime Web, model 7,7 MB)
 - Ghép 2–9 ảnh: lưới, ngang, dọc hoặc một ảnh lớn; khung 1:1, 4:5, 9:16; chỉnh khoảng cách và bo góc; đổi chỗ, xoá ảnh, kéo vạch để đổi độ rộng, cân màu theo một ảnh
 - So sánh trước/sau, hoàn tác/làm lại 20 bước, tự lưu bản nháp vào IndexedDB
 - Lưu ảnh: máy tính tải tệp xuống; điện thoại có nút **Lưu vào thư viện ảnh** (iPhone/iPad mở bảng Chia sẻ → Lưu hình ảnh, Android lưu vào Thư viện)
@@ -56,6 +56,10 @@ Sau khi model lấp, app ghép phần lấp vào ảnh sao cho khó nhận ra (`
 
 `public/_headers` bật COOP/COEP để trình duyệt hỗ trợ (Chrome, Edge, Firefox) chạy model nhiều luồng; Safari tự chạy một luồng.
 
+### Xoá vật thể trên máy chủ
+
+`worker/index.ts` là Worker phục vụ web tĩnh và API `POST /api/erase`: nhận khung PNG 512×512 quanh chỗ tô cùng mặt nạ, gọi `@cf/runwayml/stable-diffusion-v1-5-inpainting` qua binding `AI` (khai báo trong `wrangler.jsonc`), trả PNG đã lấp; không lưu ảnh. App gửi khung lên máy chủ trước, máy chủ lỗi/hết lượt/quá 45 giây thì dùng AI trên máy. Đặt `VITE_ERASE_ENGINE=device` để chỉ dùng AI trên máy. Khi chạy `npm run dev` không có Worker nên luôn dùng AI trên máy.
+
 ## Kiểm thử
 
 Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm gói. `test/setup.mjs` cho Node chạy thẳng mã nguồn TypeScript; `test/dom.ts` là canvas giả để kiểm tra pixel.
@@ -68,6 +72,7 @@ Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm g
 | `test/repair.test.ts` | Nguồn model, khung cắt quanh vùng tô, tiến độ và giới hạn thời gian, thông báo lỗi, mảng vá đúng vị trí |
 | `test/modelLoader.test.ts` | Tải model: máy chủ trả HTML, 404, mất mạng, tải thiếu, sai SHA-256, cache |
 | `test/inpaint.test.ts` | Chuyển dữ liệu ảnh ↔ model; ghép phần lấp: nới mặt nạ, hoà mép, cân màu, hạt nhiễu |
+| `test/serverRepair.test.ts` | Gọi AI máy chủ: mặt nạ, lỗi 404/429/mất mạng/quá giờ để quay về AI trên máy |
 | `test/save.test.ts` | Nhận diện iPhone/iPad/Android/máy tính, lưu vào thư viện ảnh, các trường hợp bảng chia sẻ bị huỷ hoặc bị chặn |
 | `test/image.test.ts` | Mở ảnh trên trình duyệt cũ (Chrome < 112, Safari cũ), ảnh hỏng, HEIC |
 | `test/model/inpaint.test.ts` | Chạy model thật: đúng tệp, lấp đúng màu, đo độ lệch so với nền thật |

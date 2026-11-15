@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { applyErases, MAX_ERASES, type Erase } from './engine/erase'
 import { applySpots } from './engine/heal'
-import { drawRepairs, preloadRepair, RepairError, repairRegion } from './services/repair'
+import { drawRepairs, preloadRepair, RepairError, repairRegion, useServer } from './services/repair'
 import { detectPlatform, saveImage, savedMessage, type SaveResult } from './services/save'
 import type { Push } from './engine/liquify'
 import { freshRecipe, MAX_PUSHES, MAX_SPOTS, requiresFace, usesBody, usesFace, usesHair, usesPersonMask, type AdjKey, type Body, type Features, type Recipe, type Spot } from './engine/recipe'
@@ -200,7 +200,8 @@ export function setHealTool(healTool: State['healTool']) {
 
 /** Tải sẵn model khi chọn công cụ xoá vật thể, để lúc tô xong bấm xử lý là chạy ngay. */
 async function warmRepair() {
-  if (state.repairReady || state.repairing) return
+  // AI máy chủ xử lý chính: không tải sẵn model trên máy (đỡ ~8 MB dữ liệu di động); chỉ tải khi máy chủ lỗi
+  if (useServer || state.repairReady || state.repairing) return
   const progress = (p: { phase: string; loaded?: number; total?: number }) => {
     if (state.repairing) return // đang xử lý thật: để runRepair báo tiến độ
     set({ repairProgress: p.phase === 'download' && p.total ? Math.min(100, Math.round((p.loaded ?? 0) / p.total * 100)) : null })

@@ -3,7 +3,7 @@ import { flipped, freshRecipe, MAX_LIP, PARAMS, PRESETS, RATIOS, rotated, withRa
 import { createRenderer } from '../engine/renderer'
 import { decodeFile, releaseSource, type Source } from '../services/image'
 import { matchColors } from '../engine/colorMatch'
-import { repairAvailable } from '../services/repair'
+import { repairAvailable, useServer } from '../services/repair'
 import { change, clearRepairSelection, commit, ensureBody, ensureFace, getState, live, runRepair, setBrush, setEraseSize, setHealTool, setParam, setPushSize, setSkinBrush, setSmoothSize, toast, undoRepairStroke, useStore } from '../store'
 import { Band } from './Band'
 
@@ -315,7 +315,9 @@ export function HealPanel() {
       ) : (
         <>
           <p className="note">
-            Tô kín vật thể cần xoá. Lần đầu tải model khoảng 8 MB, các lần sau dùng bản đã lưu.
+            {useServer
+              ? 'Tô kín vật thể và bóng của nó. Vùng ảnh quanh chỗ tô được gửi lên máy chủ để AI xoá, không lưu lại.'
+              : 'Tô kín vật thể và bóng của nó. Lần đầu tải model khoảng 8 MB, các lần sau dùng bản đã lưu.'}
           </p>
           <Band label="Cỡ cọ" value={eraseSize} min={1} max={100} noReset disabled={processing} onLive={setEraseSize} onCommit={() => {}} />
           <div className="chips" role="group" aria-label="Vùng tô AI">
