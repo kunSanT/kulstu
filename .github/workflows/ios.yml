@@ -1,12 +1,16 @@
 # Build app iPhone trên máy Mac của GitHub (không cần Mac riêng).
 # - Chưa có khoá Apple: chỉ build thử cho máy ảo iPhone để chắc chắn app biên dịch được.
 # - Đã thêm khoá (xem docs/ios.md): ký, đóng gói và đẩy thẳng lên TestFlight / App Store Connect.
-# Chạy tay: GitHub → Actions → iOS → Run workflow. Tự chạy khi có thay đổi trên main.
+# Tự chạy khi mở PR vào main (build thử) và khi main thay đổi; chạy tay: Actions → iOS → Run workflow.
 name: iOS
 
 on:
   workflow_dispatch:
   push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  # PR vào main: chỉ build thử, không đẩy bản nào lên Apple
+  pull_request:
     branches: [main]
     paths-ignore: ['**.md', 'docs/**']
 
@@ -23,6 +27,8 @@ jobs:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # chỉ ký và đẩy lên Apple khi có khoá và không phải PR
+      UPLOAD: ${{ secrets.ASC_KEY_ID != '' && github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +50,7 @@ jobs:
         run: npm run ios:setup
 
       - name: Build thử cho máy ảo (không ký)
-        if: env.ASC_KEY_ID == ''
+        if: env.UPLOAD != 'true'
         run: |
           xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
@@ -52,7 +58,7 @@ jobs:
           echo "::notice::Build thử thành công. Thêm khoá App Store Connect (docs/ios.md) để ký và đẩy lên TestFlight."
 
       - name: Ký và đẩy lên TestFlight
-        if: env.ASC_KEY_ID != ''
+        if: env.UPLOAD == 'true'
         run: |
           set -euo pipefail
           KEY="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"

@@ -18,7 +18,7 @@ app tự dùng AI trên máy). Việc build chạy trên máy Mac của GitHub A
 ## Bước 1: build thử (chưa cần tài khoản Apple)
 
 1. Đẩy code lên GitHub (`.shots\push.bat`). Lần đầu tệp này chạy `npm install` để cập nhật `package-lock.json` cho các gói Capacitor.
-2. GitHub → repo → **Actions** → **iOS** → **Run workflow**.
+2. Tạo PR từ `feat/xingtu-core` vào `main`: workflow **iOS** tự chạy trên PR (xem ở tab Checks). Sau khi merge, chạy lại được bằng GitHub → **Actions** → **iOS** → **Run workflow**.
 3. Khoảng 10–15 phút. Xanh = app biên dịch được cho iPhone.
 
 Repo riêng tư: GitHub tính phút máy Mac gấp 10 lần (gói miễn phí có 2.000 phút/tháng, tức khoảng 200 phút Mac).
