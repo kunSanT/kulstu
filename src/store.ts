@@ -310,6 +310,11 @@ let booted = false
 export async function boot() {
   if (booted) return
   booted = true
+  // iOS có thể đóng app/tab chạy nền mà không báo: lưu nháp ngay khi người dùng rời đi, không đợi hẹn giờ
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flushDraft())
+    window.addEventListener('pagehide', flushDraft)
+  }
   // không để màn hình mở đầu phải chờ nếu IndexedDB treo hoặc bị chặn
   const d = await Promise.race([loadDraft(), new Promise<null>((r) => setTimeout(() => r(null), 2500))])
   if (d && !state.src) {

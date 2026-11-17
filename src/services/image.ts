@@ -7,6 +7,8 @@ import { brushMask } from '../engine/smoothBrush'
 import { drawDecorations } from '../engine/decorations'
 import { drawRepairs } from './repair'
 import type { Segment } from './segment'
+import { canvasPixelLimit } from './save'
+import { fitPixels } from '../engine/exportSize'
 
 export const MAX_BYTES = 30 * 1024 * 1024
 export const MAX_PIXELS = 24e6
@@ -121,7 +123,9 @@ export async function exportImage(
   const c = document.createElement('canvas')
   const r = createRenderer(c, { preserveDrawingBuffer: true })
   try {
-    const k = Math.min(1, r.maxTex / Math.max(src.w, src.h))
+    // iPhone đời iOS cũ không vẽ được canvas quá 16,7 triệu điểm ảnh: thu nhỏ ảnh làm việc và ảnh xuất cho vừa
+    const limit = canvasPixelLimit()
+    const k = Math.min(1, r.maxTex / Math.max(src.w, src.h), fitPixels(src.w, src.h, 1, limit))
     let tex: ImageBitmap | HTMLCanvasElement = src.bitmap
     if (k < 1) {
       const t = document.createElement('canvas')
@@ -156,6 +160,7 @@ export async function exportImage(
     }
     // tính theo ảnh gốc: texture có thể đã bị thu nhỏ cho vừa GPU, nhưng 4K/1080p phải ra đúng cỡ
     const size = outputSize(recipe.geo, src.w, src.h)
+    scale = fitPixels(size.w, size.h, scale, limit)
     r.draw(recipe, { outW: Math.max(1, Math.round(size.w * scale)), outH: Math.max(1, Math.round(size.h * scale)) })
     if (r.lost) throw new Error('context lost')
     let out = c

@@ -5,20 +5,30 @@
 type AiBinding = { run(model: string, inputs: Record<string, unknown>): Promise<ReadableStream | ArrayBuffer | Uint8Array> }
 type Env = { AI: AiBinding; ASSETS: { fetch(request: Request): Promise<Response> } }
 
+import { allowedOrigin, cors } from './cors'
+
 const MODEL = '@cf/runwayml/stable-diffusion-v1-5-inpainting'
 /** Mô tả cho model: chỉ lấp nền liền mạch, không vẽ thêm vật mới. */
 const PROMPT = 'empty background, seamless continuation of the surrounding surface, same lighting, same texture, photorealistic'
 const NEGATIVE = 'object, person, face, hand, text, logo, watermark, new item, duplicate, blurry, smudge, artifacts, frame'
 const MAX_BYTES = 3 * 1024 * 1024
 
-const json = (status: number, body: Record<string, unknown>) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } })
+const json = (status: number, body: Record<string, unknown>, extra: HeadersInit = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...extra } })
 
-async function erase(request: Request, env: Env) {
-  if (request.method !== 'POST') return json(405, { error: 'method' })
-  // chỉ nhận yêu cầu từ chính web KulStu (chặn trang khác dùng ké lượt AI)
+async function erase(request: Request, env: Env): Promise<Response> {
+  // chỉ nhận yêu cầu từ chính web KulStu và app iPhone (chặn trang khác dùng ké lượt AI)
   const origin = request.headers.get('origin')
-  if (origin && new URL(origin).host !== new URL(request.url).host) return json(403, { error: 'origin' })
+  if (!allowedOrigin(origin, request.url)) return json(403, { error: 'origin' })
+  const headers = cors(origin)
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers })
+  if (request.method !== 'POST') return json(405, { error: 'method' }, headers)
+  const reply = await eraseImage(request, env)
+  for (const [k, v] of Object.entries(headers)) reply.headers.set(k, v)
+  return reply
+}
+
+async function eraseImage(request: Request, env: Env): Promise<Response> {
   let form: FormData
   try {
     form = await request.formData()

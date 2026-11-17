@@ -3,6 +3,10 @@ import './styles.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './ui/App'
+import { isNativeApp } from './services/native'
+
+// app iPhone: tắt kiểu "trang web" (kéo nảy, bôi chọn chữ giao diện), xem styles.css
+if (isNativeApp()) document.documentElement.classList.add('native')
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

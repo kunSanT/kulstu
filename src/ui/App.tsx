@@ -4,7 +4,8 @@ import { freshRecipe, outputSize, type PresetId } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
 import { exportImage, type ExportFormat } from '../services/image'
 import { exportSizes } from '../engine/exportSize'
-import { detectPlatform, isPhone } from '../services/save'
+import { canvasPixelLimit, detectPlatform, isPhone } from '../services/save'
+import { isNativeApp } from '../services/native'
 import { listDrafts, type DraftSummary } from '../services/draft'
 import {
   boot, change, dismissToast, flushDraft, getState, jumpTo, openFile, openProject, openSample, redo, removeDraft, runExport, setTab, undo, useStore, type Tab,
@@ -218,7 +219,7 @@ function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: bo
         <section className="welcome" aria-labelledby="home-title">
           <div className="welcome-body">
             <h1 id="home-title">Chân dung theo cách bạn thích.</h1>
-            <p className="lede">Lên màu, chỉnh nét và xóa vật thể ngay trên máy.</p>
+            <p className="lede">Lên màu, làm đẹp, xóa vật thể và xuất ảnh 4K.</p>
             <div className="welcome-actions">
               <button type="button" className="primary big" disabled={!ready || opening} onClick={canResume ? goToEditor : pickFile}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -230,7 +231,7 @@ function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: bo
                 {opening ? 'Đang mở…' : canResume ? 'Chọn ảnh khác' : 'Thử ảnh mẫu'}
               </button>
             </div>
-            <p className="home-privacy">Ảnh ở trên thiết bị của bạn.</p>
+            <p className="home-privacy">Ảnh được chỉnh ngay trên máy và không tải lên đâu cả, trừ khi bạn xoá vật thể bằng AI. <a href={`${import.meta.env.BASE_URL}privacy.html`} target={isNativeApp() ? undefined : "_blank"} rel="noopener">Quyền riêng tư</a></p>
           </div>
           <div className="home-photo">
             <figure className="welcome-demo" data-intro={previewReady && !adjustedSplit}
@@ -526,7 +527,7 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
   const fmt = format ?? (transparent ? 'png' : 'jpeg')
   const [sizeId, setSizeId] = useState('full')
   const full = outputSize(geo, src.w, src.h)
-  const sizes = exportSizes(full.w, full.h)
+  const sizes = exportSizes(full.w, full.h, canvasPixelLimit())
   const size = sizes.find((s) => s.id === sizeId) ?? sizes[0]
   const close = () => ref.current?.close()
   return (
@@ -551,6 +552,7 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
           </label>
         ))}
       </fieldset>
+      {size.capped && <p className="note">iPhone này vẽ tối đa {Math.round(canvasPixelLimit() / 1e6)} triệu điểm ảnh mỗi ảnh nên ảnh được thu nhỏ còn {size.w} × {size.h}. Cập nhật iOS 18 để xuất lớn hơn.</p>}
       {size.upscale && <p className="note">Ảnh gốc nhỏ hơn {size.name} nên sẽ được phóng to; chi tiết không nét thêm.</p>}
       {fmt === 'jpeg' && <label className="collage-files">
         Chất lượng JPEG {quality}%

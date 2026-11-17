@@ -543,3 +543,15 @@ dialog h2 { font-size: 26px; font-weight: 800; font-stretch: 118%; letter-spacin
 .swatch::after { content: ''; position: absolute; inset: -6px; border-radius: 50%; }
 .swatch[aria-checked='true'] { box-shadow: 0 0 0 2px var(--s1), 0 0 0 4px var(--ice); }
 .swatch:disabled { opacity: .4; }
+
+/* ---------- iPhone ---------- */
+/* nhấn giữ trên ảnh/ô xem thử không bật menu "Lưu ảnh"/"Sao chép"; chạm không loé nền xám */
+.stage, .stage canvas, .preset, .preset-img, .swatch, .chip, button { -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+/* Safari tự phóng to cả trang khi gõ vào ô chữ nhỏ hơn 16px */
+@media (pointer: coarse) {
+  input:not([type='range']):not([type='radio']):not([type='checkbox']):not([type='color']), textarea, select { font-size: 16px; }
+}
+/* trong app iPhone: không kéo nảy cả trang, không bôi chọn chữ giao diện như một trang web */
+html.native, html.native body { overscroll-behavior: none; }
+html.native body { -webkit-user-select: none; user-select: none; }
+html.native input, html.native textarea { -webkit-user-select: text; user-select: text; }

@@ -2,7 +2,10 @@
 // Model lớn hơn hẳn model chạy trên máy nên lấp vật lớn, nền nhiều chi tiết đẹp hơn; đổi lại vùng ảnh quanh chỗ tô
 // được gửi lên máy chủ (không lưu lại). Lỗi mạng, hết lượt… thì app quay về AI trên máy.
 
-export const SERVER_ERASE_URL = '/api/erase'
+import { apiUrl } from './native'
+
+/** Web: cùng máy chủ; app iPhone: địa chỉ đầy đủ của máy chủ KulStu. */
+export const SERVER_ERASE_URL = apiUrl('/api/erase')
 /** Thời gian chờ máy chủ tối đa trước khi quay về AI trên máy. */
 export const SERVER_TIMEOUT = 45_000
 
