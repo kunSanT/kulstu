@@ -8,7 +8,7 @@ import { listDrafts, type DraftSummary } from '../services/draft'
 import {
   boot, change, dismissToast, flushDraft, getState, jumpTo, openFile, openProject, openSample, redo, removeDraft, runExport, setTab, undo, useStore, type Tab,
 } from '../store'
-import { BodyPanel, ColorMatchPanel, ColorPanel, CropPanel, DetailPanel, HealPanel, PresetPanel, SkinPanel, SunlightPanel } from './Panels'
+import { BodyPanel, ColorMatchPanel, ColorPanel, CropPanel, DetailPanel, HealPanel, PresetPanel, SkinPanel, SunlightPanel, TemplatePanel } from './Panels'
 import { haptic } from './haptic'
 import { nextSheet, SHEET_SWIPE, type Sheet } from './sheet'
 import { Stage } from './Stage'
@@ -19,11 +19,11 @@ const GROUPS: { name: string; icon: string; tools: { id: Tab; name: string }[] }
   { name: 'Màu', icon: 'M12 3c2 4 6 7 6 12a6 6 0 0 1-12 0c0-5 4-8 6-12ZM9 16a3 3 0 0 0 3 3', tools: [{ id: 'color', name: 'Tinh chỉnh' }, { id: 'preset', name: 'Bộ màu' }, { id: 'colorMatch', name: 'Màu mẫu' }] },
   { name: 'Chân dung', icon: 'M8 14c1 2 3 3 4 3s3-1 4-3M8 10h.01M16 10h.01M12 21c-4 0-8-4-8-9s3-9 8-9 8 4 8 9-4 9-8 9Z', tools: [{ id: 'skin', name: 'Làm đẹp' }, { id: 'body', name: 'Dáng' }, { id: 'hair', name: 'Tóc' }] },
   { name: 'Sửa', icon: 'm4 14 9-9a2 2 0 0 1 3 0l3 3a2 2 0 0 1 0 3l-8 8H8l-4-4Zm5-5 7 7m-5 3h9', tools: [{ id: 'heal', name: 'Cọ & AI' }, { id: 'detail', name: 'Chi tiết' }] },
-  { name: 'Sáng tạo', icon: 'M12 3c0 5-4 9-9 9 5 0 9 4 9 9 0-5 4-9 9-9-5 0-9-4-9-9Z', tools: [{ id: 'create', name: 'Chữ & sticker' }, { id: 'sunlight', name: 'Nắng chiều' }] },
+  { name: 'Sáng tạo', icon: 'M12 3c0 5-4 9-9 9 5 0 9 4 9 9 0-5 4-9 9-9-5 0-9-4-9-9Z', tools: [{ id: 'template', name: 'Mẫu' }, { id: 'create', name: 'Chữ & sticker' }, { id: 'sunlight', name: 'Nắng chiều' }] },
 ]
 
 const PANELS = { crop: CropPanel, color: ColorPanel, preset: PresetPanel, skin: SkinPanel,
-  hair: HairPanel, heal: HealPanel, body: BodyPanel, background: BackgroundPanel, create: CreatePanel, detail: DetailPanel, sunlight: SunlightPanel, colorMatch: ColorMatchPanel }
+  hair: HairPanel, heal: HealPanel, body: BodyPanel, background: BackgroundPanel, create: CreatePanel, detail: DetailPanel, sunlight: SunlightPanel, colorMatch: ColorMatchPanel, template: TemplatePanel }
 
 const EDITOR_ROUTE = '#/editor'
 const HERO_IMAGE = `${import.meta.env.BASE_URL}kulstu-portrait.webp`
@@ -260,7 +260,7 @@ function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: bo
           {([{ group: GROUPS[1], tab: 'preset', name: 'Bộ màu', detail: 'Lên tông trong một chạm.' },
             { group: GROUPS[2], tab: 'skin', name: 'Chân dung', detail: 'Da, makeup và nét mặt.' },
             { group: GROUPS[3], tab: 'heal', name: 'Sửa ảnh', detail: 'Xóa mụn và vật thể AI.' },
-            { group: GROUPS[4], tab: 'create', name: 'Sáng tạo', detail: 'Thêm chữ và sticker.' }] as const).map(({ group, tab, name, detail }) => (
+            { group: GROUPS[4], tab: 'template', name: 'Mẫu ảnh', detail: 'Màu, chữ và sticker có sẵn.' }] as const).map(({ group, tab, name, detail }) => (
             <button className="home-tool" type="button" key={tab} disabled={!ready || opening} onClick={() => void openTool(tab)}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={group.icon} /></svg>
               <span><strong>{name}</strong><small>{detail}</small></span>

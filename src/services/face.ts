@@ -65,6 +65,110 @@ export function makeupMask(
   return c
 }
 
+export type SculptGeom = {
+  eyeL: Pt
+  eyeR: Pt
+  mouth: Pt
+  /** Hai mép mặt ngang tầm gò má. */
+  edgeL: Pt
+  edgeR: Pt
+  /** Viền hai chân mày (toạ độ chuẩn hoá). */
+  brows: Pt[][]
+}
+
+/** Chân mày dựng từ vị trí mắt, cho ảnh mẫu không có điểm mốc. */
+export function browArc(eye: Pt, half: number, lift: number, mirror: boolean): Pt[] {
+  const top: Pt[] = []
+  const bottom: Pt[] = []
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8
+    const x = eye.x + (mirror ? 1 : -1) * (t - .45) * half * 2.3
+    const arch = Math.sin(Math.min(1, t * 1.35) * Math.PI) * lift * .35
+    const thick = lift * (.28 - .16 * t)
+    top.push({ x, y: eye.y - lift - arch - thick })
+    bottom.push({ x, y: eye.y - lift - arch + thick })
+  }
+  return [...top, ...bottom.reverse()]
+}
+
+export type Streak = { channel: 'dark' | 'light'; a: Pt; b: Pt; thick: number; strength: number }
+
+/**
+ * Các vệt tạo khối (toạ độ điểm ảnh của mặt nạ cw×ch) theo khung khuôn mặt: trục ngang qua hai mắt,
+ * trục dọc từ mắt xuống miệng. thick đã đổi ra điểm ảnh.
+ */
+export function sculptStreaks(geo: SculptGeom, cw: number, ch: number): Streak[] {
+  const px = (p: Pt) => ({ x: p.x * cw, y: p.y * ch })
+  const eL = px(geo.eyeL)
+  const eR = px(geo.eyeR)
+  const o = { x: (eL.x + eR.x) / 2, y: (eL.y + eR.y) / 2 }
+  const span = Math.hypot(eR.x - eL.x, eR.y - eL.y) || 1
+  const u = { x: (eR.x - eL.x) / span, y: (eR.y - eL.y) / span }
+  const v = { x: -u.y, y: u.x }
+  const sL = px(geo.edgeL)
+  const sR = px(geo.edgeR)
+  const half = Math.max(span * .9, Math.hypot(sR.x - sL.x, sR.y - sL.y) / 2)
+  const m = px(geo.mouth)
+  const down = Math.max(span * .5, (m.x - o.x) * v.x + (m.y - o.y) * v.y)
+  const at = (x: number, y: number) => ({ x: o.x + u.x * x * half + v.x * y * down, y: o.y + u.y * x * half + v.y * y * down })
+  const out: Streak[] = []
+  const add = (channel: Streak['channel'], a: Pt, b: Pt, thick: number, strength: number) =>
+    out.push({ channel, a, b, thick: thick * half, strength })
+  for (const side of [-1, 1]) {
+    add('dark', at(side * 1.02, .4), at(side * .5, .78), .22, .8) // dưới gò má
+    add('dark', at(side * .14, .05), at(side * .16, .6), .07, .45) // hai bên sống mũi
+    add('dark', at(side * .98, .9), at(side * .45, 1.55), .18, .65) // viền hàm
+    add('dark', at(side * .9, -.75), at(side * 1, -.1), .18, .45) // thái dương
+    add('light', at(side * .62, .2), at(side * .3, .36), .1, .85) // gò má trên
+  }
+  add('light', at(0, -.15), at(0, .56), .06, .9) // sống mũi
+  add('light', at(0, -1.05), at(0, -.62), .26, .7) // giữa trán
+  add('light', at(-.1, 1.42), at(.1, 1.42), .12, .6) // cằm
+  return out
+}
+
+/** Đỏ = đánh khối tối, xanh lá = bắt sáng, xanh lam = chân mày. */
+export function sculptMask(w: number, h: number, geo: SculptGeom) {
+  const c = document.createElement('canvas')
+  const scale = 512 / Math.max(w, h)
+  c.width = Math.max(1, Math.round(w * scale))
+  c.height = Math.max(1, Math.round(h * scale))
+  const g = c.getContext('2d')!
+  g.fillStyle = '#000'
+  g.fillRect(0, 0, c.width, c.height)
+  g.globalCompositeOperation = 'lighter'
+  for (const { channel, a, b, thick, strength } of sculptStreaks(geo, c.width, c.height)) {
+    const rgb = channel === 'dark' ? '255,0,0' : '0,255,0'
+    const r = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y) / 2, thick)
+    g.save()
+    g.translate((a.x + b.x) / 2, (a.y + b.y) / 2)
+    g.rotate(Math.atan2(b.y - a.y, b.x - a.x))
+    g.scale(1, Math.max(.05, thick / r))
+    const gradient = g.createRadialGradient(0, 0, 0, 0, 0, r)
+    gradient.addColorStop(0, `rgba(${rgb},${strength})`)
+    gradient.addColorStop(.5, `rgba(${rgb},${strength * .62})`)
+    gradient.addColorStop(1, `rgba(${rgb},0)`)
+    g.fillStyle = gradient
+    g.fillRect(-r, -r, r * 2, r * 2)
+    g.restore()
+  }
+  // chân mày: tô đặc phần lõi, viền ngoài nhạt dần
+  const span = Math.hypot((geo.eyeR.x - geo.eyeL.x) * c.width, (geo.eyeR.y - geo.eyeL.y) * c.height)
+  g.lineJoin = 'round'
+  for (const brow of geo.brows) {
+    if (brow.length < 3) continue
+    g.beginPath()
+    brow.forEach((p, i) => (i ? g.lineTo(p.x * c.width, p.y * c.height) : g.moveTo(p.x * c.width, p.y * c.height)))
+    g.closePath()
+    g.fillStyle = 'rgba(0,0,255,.62)'
+    g.fill()
+    g.strokeStyle = 'rgba(0,0,255,.3)'
+    g.lineWidth = Math.max(1, span * .05)
+    g.stroke()
+  }
+  return c
+}
+
 let pending: Promise<Landmarker> | null = null
 
 function loadLandmarker(): Promise<Landmarker> {
@@ -122,6 +226,11 @@ export async function detectFace(image: HTMLCanvasElement): Promise<FaceResult> 
     }
     g.fill('evenodd')
   }, lids)
+  features.sculptMask = sculptMask(image.width, image.height, {
+    eyeL: features.eyeL, eyeR: features.eyeR, mouth: features.mouth,
+    edgeL: best[234], edgeR: best[454],
+    brows: [ring(KEEP_SHARP[2]), ring(KEEP_SHARP[3])],
+  })
   return {
     count: faces.length,
     mask: buildMask(image.width, image.height, ring(OVAL), KEEP_SHARP.map(ring)),
