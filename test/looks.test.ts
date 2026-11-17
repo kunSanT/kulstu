@@ -6,7 +6,7 @@ import {
 } from '../src/engine/looks.ts'
 import { describeStep } from '../src/engine/history.ts'
 import { freshRecipe, MAKEUP_KEYS, MAX_LIP, normalizeRecipe, PRESET_GROUPS, PRESETS, type Recipe } from '../src/engine/recipe.ts'
-import { sculptStreaks } from '../src/services/face.ts'
+import { contourRim, sculptStreaks } from '../src/services/face.ts'
 
 test('kho bộ màu: id không trùng, nhóm nào cũng có, thông số trong dải an toàn', () => {
   const ids = PRESETS.map((p) => p.id)
@@ -142,33 +142,49 @@ test('lịch sử gọi tên mẫu ảnh, làm đẹp một chạm và màu son'
   assert.equal(describeStep(base, { ...base, makeup: { ...base.makeup, contour: 30 } }), 'Trang điểm')
 })
 
-test('tạo khối: vùng tối nằm hai bên mặt, vùng sáng ở giữa, đúng cả khi mặt nghiêng', () => {
+// mặt rộng 200px trên khung 512, xoay tilt rad quanh tâm (256, 256)
+function tiltedFace(tilt: number) {
+  const rot = (x: number, y: number) => ({
+    x: (256 + (x - 256) * Math.cos(tilt) - (y - 256) * Math.sin(tilt)) / 512,
+    y: (256 + (x - 256) * Math.sin(tilt) + (y - 256) * Math.cos(tilt)) / 512,
+  })
+  const oval = Array.from({ length: 48 }, (_, i) => rot(256 + Math.cos(i * Math.PI / 24) * 100, 270 + Math.sin(i * Math.PI / 24) * 130))
+  const geo = { eyeL: rot(216, 230), eyeR: rot(296, 230), mouth: rot(256, 300), edgeL: rot(156, 250), edgeR: rot(356, 250), brows: [], oval }
+  // đổi về khung mặt thẳng để so
+  const local = (p: { x: number; y: number }) => {
+    const dx = p.x - 256
+    const dy = p.y - 256
+    return { x: 256 + dx * Math.cos(tilt) + dy * Math.sin(tilt), y: 256 - dx * Math.sin(tilt) + dy * Math.cos(tilt) }
+  }
+  const toImage = (x: number, y: number) => {
+    const p = rot(x, y)
+    return { x: Math.round(p.x * 512), y: Math.round(p.y * 512) }
+  }
+  return { geo, local, toImage }
+}
+
+test('bắt sáng: sống mũi trên trục giữa, gò má cân hai bên, đúng cả khi mặt nghiêng', () => {
   for (const tilt of [0, .35]) {
-    // mặt rộng 200px trên khung 512, xoay tilt rad quanh tâm (256, 256)
-    const rot = (x: number, y: number) => ({
-      x: (256 + (x - 256) * Math.cos(tilt) - (y - 256) * Math.sin(tilt)) / 512,
-      y: (256 + (x - 256) * Math.sin(tilt) + (y - 256) * Math.cos(tilt)) / 512,
-    })
-    const geo = { eyeL: rot(216, 230), eyeR: rot(296, 230), mouth: rot(256, 300), edgeL: rot(156, 250), edgeR: rot(356, 250), brows: [] }
-    const streaks = sculptStreaks(geo, 512, 512)
-    // đổi về khung mặt thẳng để so
-    const local = (p: { x: number; y: number }) => {
-      const dx = p.x - 256
-      const dy = p.y - 256
-      return { x: dx * Math.cos(tilt) + dy * Math.sin(tilt), y: -dx * Math.sin(tilt) + dy * Math.cos(tilt) }
-    }
-    const centers = streaks.map((s) => ({ ...s, c: local({ x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 }) }))
-    const dark = centers.filter((s) => s.channel === 'dark')
-    const light = centers.filter((s) => s.channel === 'light')
-    assert.equal(dark.filter((s) => s.c.x < 0).length, dark.filter((s) => s.c.x > 0).length, 'hai bên cân')
-    // khối dưới gò má: thấp hơn mắt, cao hơn cằm, nằm ngoài sống mũi
-    const hollow = dark[0]
-    assert.ok(hollow.c.y > -26 + 10 && hollow.c.y < 44 + 40, `tilt ${tilt}: ${hollow.c.y}`)
-    assert.ok(Math.abs(hollow.c.x) > 40 && Math.abs(hollow.c.x) < 100)
-    // sống mũi sáng nằm trên trục giữa, giữa mắt và miệng
-    const bridge = light.find((s) => s.thick < 10)!
-    assert.ok(Math.abs(bridge.c.x) < 1)
-    assert.ok(bridge.c.y > -26 && bridge.c.y < 44)
-    for (const s of streaks) assert.ok(s.strength > 0 && s.strength <= 1)
+    const { geo, local } = tiltedFace(tilt)
+    const centers = sculptStreaks(geo, 512, 512).map((s) => ({ ...s, c: local({ x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 }) }))
+    const bridge = centers[2]
+    assert.ok(Math.abs(bridge.c.x - 256) < 1, `tilt ${tilt}`)
+    assert.ok(bridge.c.y > 230 && bridge.c.y < 300, 'giữa mắt và miệng')
+    assert.ok(Math.abs((centers[0].c.x - 256) + (centers[1].c.x - 256)) < 1, 'hai gò má đối xứng')
+    for (const s of centers) assert.ok(s.strength > 0 && s.strength <= 1)
+  }
+})
+
+test('tạo khối: đậm ở viền má và hàm, không chạm giữa mặt, ngoài mặt bằng 0', () => {
+  for (const tilt of [0, .35]) {
+    const { geo, toImage } = tiltedFace(tilt)
+    const rim = contourRim(geo, 512, 512)
+    const at = (x: number, y: number) => { const p = toImage(x, y); return rim[p.y * 512 + p.x] }
+    assert.ok(at(162, 290) > .4, `má trái gần viền, tilt ${tilt}: ${at(162, 290)}`)
+    assert.ok(at(350, 290) > .4, 'má phải gần viền')
+    assert.equal(at(256, 280), 0, 'giữa mặt')
+    assert.equal(at(256, 150), 0, 'đỉnh trán')
+    assert.equal(at(120, 290), 0, 'ngoài mặt')
+    assert.ok(at(162, 290) > at(185, 290), 'nhạt dần vào trong')
   }
 })

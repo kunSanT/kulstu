@@ -134,10 +134,18 @@ void main(){
       // tạo khối và bắt sáng chỉ trong vùng da mặt; chân mày nằm ngoài mặt nạ da nên không nhân m
       vec3 sculpt = texture(sculptMask, s).rgb;
       float y = luma(base.rgb);
-      float shade = sculpt.r*m*makeup2.y*smoothstep(.04,.3,y);
-      c *= 1.-shade*vec3(.14,.17,.2);
-      float glow = sculpt.g*m*makeup2.z*(1.-smoothstep(.75,.98,y));
-      c += (1.-c)*glow*vec3(.3,.29,.27);
+      // tạo khối: viền mặt tối dần, hơi ấm như phấn khối; không nhân m vì viền mặt nạ da đã mềm sẵn
+      float shade = sculpt.r*makeup2.y*smoothstep(.04,.3,y);
+      c *= 1.-shade*vec3(.2,.24,.28);
+      // bắt sáng: chỉ nâng những chỗ vốn sáng hơn vùng xung quanh, nên đi theo khối mặt thật
+      if(sculpt.g>.001 && makeup2.z>0.){
+        vec2 far = rad*14.;
+        float around = .25*(luma(textureLod(img,s+vec2(far.x,0.),lod+2.).rgb) + luma(textureLod(img,s-vec2(far.x,0.),lod+2.).rgb)
+          + luma(textureLod(img,s+vec2(0.,far.y),lod+2.).rgb) + luma(textureLod(img,s-vec2(0.,far.y),lod+2.).rgb));
+        float lit = smoothstep(-.02,.07,y-around);
+        float glow = sculpt.g*m*makeup2.z*lit*(1.-smoothstep(.8,.98,y));
+        c += (1.-c)*glow*vec3(.26,.25,.23);
+      }
       float brow = sculpt.b*makeup2.x*smoothstep(.03,.18,y);
       c *= 1.-brow*vec3(.34,.4,.46);
     }

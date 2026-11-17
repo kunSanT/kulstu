@@ -404,6 +404,7 @@ export async function ensureFace(retry = false) {
       eyeL, eyeR, mouth,
       edgeL: { x: f.cx - f.rx, y: eyeL.y + .02 }, edgeR: { x: f.cx + f.rx, y: eyeR.y + .02 },
       brows: [browArc(eyeL, .05, .045, false), browArc(eyeR, .05, .045, true)],
+      oval: Array.from({ length: 48 }, (_, i) => ({ x: f.cx + Math.cos(i * Math.PI / 24) * f.rx, y: f.cy + Math.sin(i * Math.PI / 24) * f.ry })),
     })
     set({ face: { status: 'ready', count: 1, mask: ellipseMask(src.w, src.h, f.cx, f.cy, f.rx, f.ry), features: { ...SAMPLE.features, makeupMask: sampleMakeup, sculptMask: sampleSculpt } } })
     return
