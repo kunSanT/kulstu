@@ -101,67 +101,48 @@ export function currentMakeupLook(r: Recipe): string | null {
 /* ---------- mẫu ảnh ---------- */
 
 export type TemplateLayer = Omit<Decoration, 'id' | 'tpl'>
+/** Mẫu ảnh = một phong cách trọn gói: màu, ánh sáng, nền, làm đẹp, trang điểm. Không dán sticker. */
 export type Template = {
   id: string
   name: string
+  hint: string
   preset: string | null
   presetAmt?: number
   adj?: Partial<Record<AdjKey, number>>
   sunlight?: number
+  backgroundBlur?: number
   beauty?: { id: string; amt: number }
-  layers: (now: Date) => TemplateLayer[]
+  makeup?: string
+  layers?: (now: Date) => TemplateLayer[]
 }
 
 const two = (n: number) => String(n).padStart(2, '0')
 /** Ngày kiểu dấu máy ảnh phim: 17 11 '26. */
 export const filmDate = (d: Date) => `${two(d.getDate())} ${two(d.getMonth() + 1)} '${two(d.getFullYear() % 100)}`
-const dotDate = (d: Date) => `${two(d.getDate())}.${two(d.getMonth() + 1)}.${d.getFullYear()}`
 
 export const TEMPLATES: Template[] = [
-  { id: 'nhat-ky', name: 'Nhật ký phim', preset: 'vang-phim', presetAmt: 90, adj: { vignette: 28 },
+  { id: 'trong-veo', name: 'Trong veo', hint: 'Da sáng, màu Hàn nhẹ', preset: 'han', presetAmt: 80, adj: { highlights: 10 },
+    beauty: { id: 'tu-nhien', amt: 70 } },
+  { id: 'diu-dang', name: 'Dịu dàng', hint: 'Hồng phấn, má hồng nhẹ', preset: 'hong-phan', presetAmt: 80,
+    beauty: { id: 'tuoi-tan', amt: 60 }, makeup: 'trong-treo' },
+  { id: 'xoa-phong', name: 'Xoá phông', hint: 'Nền mờ, người nổi bật', preset: 'trong', presetAmt: 70, backgroundBlur: 50,
+    beauty: { id: 'tu-nhien', amt: 60 } },
+  { id: 'nang-chieu', name: 'Nắng chiều', hint: 'Ấm, tia nắng xiên', preset: 'nang', presetAmt: 85, sunlight: 40, adj: { vignette: 15 } },
+  { id: 'nhat-ky', name: 'Nhật ký phim', hint: 'Màu phim, dấu ngày', preset: 'vang-phim', presetAmt: 90, adj: { vignette: 28 },
     layers: (d) => [{ kind: 'text', value: filmDate(d), x: 80, y: 93, size: 4.6, color: '#ff8a3d', style: 'shadow', font: 'mono' }] },
-  { id: 'tap-chi', name: 'Tạp chí', preset: 'han', presetAmt: 80, beauty: { id: 'tu-nhien', amt: 70 },
-    layers: (d) => [
-      { kind: 'text', value: 'KULSTU', x: 50, y: 10, size: 15, color: '#ffffff', style: 'shadow', font: 'serif' },
-      { kind: 'text', value: `SỐ ĐẶC BIỆT · ${d.getFullYear()}`, x: 50, y: 18.5, size: 3.4, color: '#ffffff', style: 'shadow', font: 'sans' },
-      { kind: 'text', value: 'Vẻ đẹp tự nhiên', x: 50, y: 90, size: 6, color: '#ffffff', style: 'shadow', font: 'serif' },
-    ] },
-  { id: 'nang-mai', name: 'Nắng mai', preset: 'nang', presetAmt: 85, sunlight: 35,
-    layers: () => [
-      { kind: 'sticker', value: '☀️', x: 85, y: 11, size: 13, color: '#ffffff' },
-      { kind: 'text', value: 'chào buổi sáng', x: 50, y: 91, size: 6.5, color: '#fff6e0', style: 'shadow', font: 'serif' },
-    ] },
-  { id: 'hoa-dao', name: 'Hoa đào', preset: 'anh-dao', presetAmt: 85, beauty: { id: 'tuoi-tan', amt: 70 },
-    layers: () => [
-      { kind: 'sticker', value: '🌸', x: 12, y: 9, size: 12, color: '#ffffff', rotation: -14 },
-      { kind: 'sticker', value: '🌸', x: 88, y: 86, size: 9, color: '#ffffff', rotation: 18 },
-      { kind: 'text', value: 'ngày xinh', x: 50, y: 92, size: 7, color: '#ffffff', style: 'shadow', font: 'serif' },
-    ] },
-  { id: 'co-dien', name: 'Cổ điển', preset: 'xam-mem', presetAmt: 100, adj: { vignette: 42, c: 10 },
-    layers: (d) => [{ kind: 'text', value: dotDate(d), x: 80, y: 94, size: 4, color: '#f2f2f2', style: 'plain', font: 'mono' }] },
-  { id: 'thu-vang', name: 'Thu vàng', preset: 'ho-phach', presetAmt: 85, adj: { vignette: 20 },
-    layers: () => [
-      { kind: 'sticker', value: '🍂', x: 14, y: 88, size: 11, color: '#ffffff', rotation: -10 },
-      { kind: 'sticker', value: '🍁', x: 87, y: 10, size: 10, color: '#ffffff', rotation: 22 },
-      { kind: 'text', value: 'mùa thu', x: 50, y: 92, size: 7.5, color: '#ffe4b8', style: 'shadow', font: 'serif' },
-    ] },
-  { id: 'pho-dem', name: 'Phố đêm', preset: 'dem', presetAmt: 85, adj: { vignette: 30 },
-    layers: (d) => [
-      { kind: 'text', value: 'PHỐ ĐÊM', x: 50, y: 88, size: 8, color: '#9fd8ff', style: 'shadow', font: 'sans' },
-      { kind: 'text', value: dotDate(d), x: 50, y: 94, size: 3.4, color: '#e8f4ff', style: 'plain', font: 'mono' },
-    ] },
-  { id: 'trong-treo', name: 'Trong trẻo', preset: 'trong', presetAmt: 80, beauty: { id: 'tuoi-tan', amt: 70 },
-    layers: () => [
-      { kind: 'sticker', value: '✨', x: 84, y: 12, size: 10, color: '#ffffff' },
-      { kind: 'sticker', value: '✨', x: 16, y: 80, size: 7, color: '#ffffff' },
-    ] },
+  { id: 'phim-cu', name: 'Phim cũ', hint: 'Bạc màu, mềm', preset: 'phim-cu', presetAmt: 90, adj: { vignette: 30 } },
+  { id: 'mua-thu', name: 'Mùa thu', hint: 'Vàng mật ong, son cam', preset: 'ho-phach', presetAmt: 85, adj: { vignette: 20 }, makeup: 'dao' },
+  { id: 'pho-dem', name: 'Phố đêm', hint: 'Bóng xanh, sáng cam', preset: 'thanh-pho', presetAmt: 85, adj: { shadows: -10, vignette: 25 } },
+  { id: 'tiec-toi', name: 'Tiệc tối', hint: 'Trang điểm đậm, nền trầm', preset: 'dem', presetAmt: 60, adj: { vignette: 30 },
+    beauty: { id: 'thanh-tu', amt: 60 }, makeup: 'tiec' },
+  { id: 'den-trang', name: 'Đen trắng', hint: 'Tương phản sâu', preset: 'than-chi', presetAmt: 90, adj: { vignette: 35 } },
 ]
 
 let tplSeq = 0
 
 /**
- * Áp mẫu ảnh: bộ màu, chỉnh màu, làm đẹp và lớp chữ/sticker của mẫu. Lớp của mẫu cũ bị thay,
- * lớp người dùng tự thêm vẫn giữ. id null = gỡ mẫu (bỏ lớp của mẫu, đưa bộ màu và làm đẹp về gốc).
+ * Áp mẫu ảnh. Những gì mẫu cũ đặt (màu, nắng, mờ nền, làm đẹp, trang điểm, dấu ngày) được gỡ trước;
+ * chữ người dùng tự thêm vẫn giữ. id null = gỡ mẫu.
  */
 export function applyTemplate(r: Recipe, id: string | null, now = new Date()): Recipe {
   const prev = TEMPLATES.find((t) => t.id === r.template)
@@ -172,8 +153,13 @@ export function applyTemplate(r: Recipe, id: string | null, now = new Date()): R
   if (prev) {
     const adj = { ...next.adj }
     for (const k of Object.keys(prev.adj ?? {}) as AdjKey[]) adj[k] = 0
-    next = { ...next, adj, preset: { id: null, amt: 80 }, sunlight: prev.sunlight ? 0 : next.sunlight }
+    next = {
+      ...next, adj, preset: { id: null, amt: 80 },
+      sunlight: prev.sunlight ? 0 : next.sunlight,
+      backgroundBlur: prev.backgroundBlur ? 0 : next.backgroundBlur,
+    }
     if (prev.beauty) next = applyBeauty(next, null, 0)
+    if (prev.makeup) next = applyMakeupLook(next, 'none')
   }
   if (!t) return next
   next = {
@@ -181,8 +167,10 @@ export function applyTemplate(r: Recipe, id: string | null, now = new Date()): R
     preset: { id: t.preset, amt: t.presetAmt ?? 80 },
     adj: { ...next.adj, ...t.adj },
     sunlight: t.sunlight ?? next.sunlight,
-    decorations: [...own, ...t.layers(now).map((l) => ({ ...l, id: `tpl-${Date.now().toString(36)}-${tplSeq++}`, tpl: true }))],
+    backgroundBlur: t.backgroundBlur ?? next.backgroundBlur,
+    decorations: [...own, ...(t.layers?.(now) ?? []).map((l) => ({ ...l, id: `tpl-${Date.now().toString(36)}-${tplSeq++}`, tpl: true }))],
   }
   if (t.beauty) next = applyBeauty(next, t.beauty.id, t.beauty.amt)
+  if (t.makeup) next = applyMakeupLook(next, t.makeup)
   return next
 }

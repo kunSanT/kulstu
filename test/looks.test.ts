@@ -81,20 +81,21 @@ test('mẫu trang điểm: áp đúng màu, nhận ra mẫu đang dùng, sửa t
   assert.equal(lipShade('khong-co').id, 'hong', 'màu lạ thì dùng màu mặc định')
 })
 
-test('mẫu ảnh: bộ màu có thật, lớp chữ nằm trong khung', () => {
+test('mẫu ảnh: bộ màu, làm đẹp, trang điểm đều có thật; không dán sticker', () => {
   const ids = new Set(PRESETS.map((p) => p.id))
   for (const t of TEMPLATES) {
     if (t.preset) assert.ok(ids.has(t.preset), t.id)
     if (t.beauty) assert.ok(BEAUTY_LOOKS.some((l) => l.id === t.beauty!.id), t.id)
-    for (const l of t.layers(new Date(2026, 10, 17))) {
+    if (t.makeup) assert.ok(MAKEUP_LOOKS.some((l) => l.id === t.makeup), t.id)
+    for (const l of t.layers?.(new Date(2026, 10, 17)) ?? []) {
+      assert.equal(l.kind, 'text', t.id)
       assert.ok(l.x > 0 && l.x < 100 && l.y > 0 && l.y < 100, t.id)
-      assert.ok(l.size > 0 && l.size <= 20, t.id)
     }
   }
   assert.equal(filmDate(new Date(2026, 0, 5)), "05 01 '26")
 })
 
-test('đổi mẫu thay lớp của mẫu cũ, giữ chữ người dùng tự thêm; gỡ mẫu trả lại như trước', () => {
+test('đổi mẫu gỡ sạch phần của mẫu cũ, giữ chữ người dùng tự thêm; gỡ mẫu trả lại như trước', () => {
   const mine = { id: 'u1', kind: 'text' as const, value: 'của tôi', x: 50, y: 50, size: 8, color: '#fff' }
   const start = { ...freshRecipe(), decorations: [mine] }
   const film = applyTemplate(start, 'nhat-ky')
@@ -104,34 +105,38 @@ test('đổi mẫu thay lớp của mẫu cũ, giữ chữ người dùng tự t
   assert.equal(film.decorations.length, 2)
   assert.ok(film.decorations[1].tpl)
 
-  const mag = applyTemplate(film, 'tap-chi')
-  assert.equal(mag.adj.vignette, 0, 'tối viền của mẫu cũ được gỡ')
-  assert.equal(mag.decorations.filter((d) => d.tpl).length, 3)
-  assert.deepEqual(mag.decorations[0], mine)
-  assert.equal(mag.beauty.id, 'tu-nhien')
-  assert.ok(mag.smooth > 0)
-  const ids = mag.decorations.map((d) => d.id)
-  assert.equal(new Set(ids).size, ids.length)
+  const party = applyTemplate(film, 'tiec-toi')
+  assert.equal(party.adj.vignette, 30)
+  assert.deepEqual(party.decorations, [mine], 'dấu ngày của mẫu cũ được gỡ')
+  assert.equal(party.beauty.id, 'thanh-tu')
+  assert.equal(currentMakeupLook(party), 'tiec', 'trang điểm của mẫu đè lên phần trang điểm của làm đẹp')
+  assert.ok(party.smooth > 0)
 
-  const off = applyTemplate(mag, null)
+  const blur = applyTemplate(party, 'xoa-phong')
+  assert.equal(blur.backgroundBlur, 50)
+  assert.equal(currentMakeupLook(blur), null, 'trang điểm Tiệc tối đã gỡ, chỉ còn phần của làm đẹp Tự nhiên')
+  assert.equal(blur.makeup.shadow, 0)
+
+  const off = applyTemplate(blur, null)
   assert.equal(off.template, null)
   assert.equal(off.preset.id, null)
+  assert.equal(off.backgroundBlur, 0)
   assert.equal(off.smooth, 0, 'làm đẹp của mẫu được gỡ')
   assert.deepEqual(off.decorations, [mine])
 })
 
 test('mẫu không đụng tới chỉnh màu mà người dùng tự đặt ngoài phần mẫu điều khiển', () => {
   const start = { ...freshRecipe(), adj: { ...freshRecipe().adj, b: 20 } }
-  const r = applyTemplate(applyTemplate(start, 'co-dien'), 'nang-mai')
+  const r = applyTemplate(applyTemplate(start, 'pho-dem'), 'nang-chieu')
   assert.equal(r.adj.b, 20)
-  assert.equal(r.adj.c, 0, 'tương phản của Cổ điển được gỡ')
-  assert.equal(r.sunlight, 35)
+  assert.equal(r.adj.shadows, 0, 'vùng tối của Phố đêm được gỡ')
+  assert.equal(r.sunlight, 40)
   assert.equal(applyTemplate(r, null).sunlight, 0)
 })
 
 test('lịch sử gọi tên mẫu ảnh, làm đẹp một chạm và màu son', () => {
   const base = freshRecipe()
-  assert.equal(describeStep(base, applyTemplate(base, 'thu-vang')), 'Mẫu ảnh')
+  assert.equal(describeStep(base, applyTemplate(base, 'mua-thu')), 'Mẫu ảnh')
   assert.equal(describeStep(base, applyBeauty(base, 'tuoi-tan', 80)), 'Làm đẹp một chạm')
   assert.equal(describeStep(base, { ...base, shade: { ...base.shade, lip: 'do' } }), 'Trang điểm')
   assert.equal(describeStep(base, { ...base, makeup: { ...base.makeup, contour: 30 } }), 'Trang điểm')

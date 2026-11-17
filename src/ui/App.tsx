@@ -260,7 +260,7 @@ function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: bo
           {([{ group: GROUPS[1], tab: 'preset', name: 'Bộ màu', detail: 'Lên tông trong một chạm.' },
             { group: GROUPS[2], tab: 'skin', name: 'Chân dung', detail: 'Da, makeup và nét mặt.' },
             { group: GROUPS[3], tab: 'heal', name: 'Sửa ảnh', detail: 'Xóa mụn và vật thể AI.' },
-            { group: GROUPS[4], tab: 'template', name: 'Mẫu ảnh', detail: 'Màu, chữ và sticker có sẵn.' }] as const).map(({ group, tab, name, detail }) => (
+            { group: GROUPS[4], tab: 'template', name: 'Mẫu ảnh', detail: 'Phong cách dựng sẵn, một chạm.' }] as const).map(({ group, tab, name, detail }) => (
             <button className="home-tool" type="button" key={tab} disabled={!ready || opening} onClick={() => void openTool(tab)}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={group.icon} /></svg>
               <span><strong>{name}</strong><small>{detail}</small></span>

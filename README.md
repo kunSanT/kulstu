@@ -9,7 +9,7 @@ Web app chỉnh ảnh chân dung ngay trong trình duyệt, ưu tiên điện th
 - Nhập ảnh JPEG, PNG, WebP (HEIC/HEIF nếu trình duyệt hỗ trợ), xuất JPEG hoặc PNG
 - Cắt theo tỷ lệ 1:1, 4:5, 9:16 hoặc tự do; xoay, lật
 - Chỉnh sáng, tương phản, bão hòa, nhiệt độ màu; 31 bộ màu chia 5 nhóm (Chân dung, Phim, Hàn – Nhật, Phong cảnh, Đen trắng) có cường độ
-- **Mẫu ảnh**: áp bộ màu, làm đẹp, chữ và sticker trong một chạm; đổi mẫu giữ nguyên chữ bạn tự thêm
+- **Mẫu ảnh**: 10 phong cách trọn gói (màu, nắng, xoá phông, làm đẹp, trang điểm) áp trong một chạm
 - **Làm đẹp một chạm** (Tự nhiên, Tươi tắn, Thanh tú, Nam) có thanh cường độ
 - Trang điểm: son (6 màu), má hồng (4 màu), phấn mắt, chân mày, tạo khối và bắt sáng; 7 mẫu trang điểm dựng sẵn
 - Làm mịn da, xoá mụn, kéo nắn (liquify), chỉnh dáng người
@@ -71,7 +71,7 @@ Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm g
 | --- | --- |
 | `test/collage.test.ts` | Bố cục (cả khung không vuông và ảnh lớn), khoảng cách, bo góc, độ rộng từng ảnh, tay kéo, đổi chỗ bằng phím, cân màu |
 | `test/history.test.ts` | Đặt tên từng bước trong lịch sử chỉnh sửa |
-| `test/looks.test.ts` | Kho bộ màu, làm đẹp một chạm, mẫu trang điểm, đổi/gỡ mẫu ảnh giữ chữ của bạn, vị trí vùng tạo khối (cả khi mặt nghiêng), nháp cũ |
+| `test/looks.test.ts` | Kho bộ màu, làm đẹp một chạm, mẫu trang điểm, đổi/gỡ mẫu ảnh gỡ sạch phần của mẫu cũ, vị trí vùng tạo khối (cả khi mặt nghiêng), nháp cũ |
 | `test/sheet.test.ts` | Nấc của bảng chỉnh khi vuốt trên điện thoại |
 | `test/repair.test.ts` | Nguồn model, khung cắt quanh vùng tô, tiến độ và giới hạn thời gian, thông báo lỗi, mảng vá đúng vị trí |
 | `test/modelLoader.test.ts` | Tải model: máy chủ trả HTML, 404, mất mạng, tải thiếu, sai SHA-256, cache |

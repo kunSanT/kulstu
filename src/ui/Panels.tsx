@@ -250,7 +250,7 @@ export function TemplatePanel() {
           Không mẫu
         </button>
         {TEMPLATES.map((t) => (
-          <button key={t.id} type="button" className="preset" aria-pressed={template === t.id} onClick={() => pick(t.id)}>
+          <button key={t.id} type="button" className="preset" title={t.hint} aria-pressed={template === t.id} onClick={() => pick(t.id)}>
             <span className="preset-img tall" style={{ backgroundImage: thumbs[t.id] ? `url(${thumbs[t.id]})` : undefined }} />
             {t.name}
           </button>
@@ -258,8 +258,8 @@ export function TemplatePanel() {
       </div>
       <p className="note">
         {cur
-          ? <>Mẫu {cur.name}{cur.beauty ? ' có làm đẹp nhẹ cho khuôn mặt' : ''}. Chữ và sticker của mẫu sửa được ở <b>Chữ & sticker</b>; đổi mẫu thì thay chúng, chữ bạn tự thêm vẫn giữ.</>
-          : 'Chạm một mẫu để áp màu, chữ và sticker trong một lần.'}
+          ? `${cur.name}: ${cur.hint.toLowerCase()}${cur.beauty || cur.makeup ? ', có làm đẹp cho khuôn mặt' : ''}. Vẫn chỉnh tiếp được từng phần.`
+          : 'Chạm một phong cách để áp màu, ánh sáng và làm đẹp trong một lần.'}
       </p>
     </>
   )
