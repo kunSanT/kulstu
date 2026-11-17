@@ -33,16 +33,20 @@ export type BeautyValues = {
   makeup: Partial<Record<MakeupKey, number>>
 }
 
+// Giữ nhẹ tay: ở 100% vẫn phải trông như ảnh thật, người dùng muốn đậm hơn thì kéo từng thanh.
 export const BEAUTY_LOOKS: { id: string; name: string; hint: string; v: BeautyValues }[] = [
   { id: 'tu-nhien', name: 'Tự nhiên', hint: 'Mịn nhẹ, giữ nét thật',
-    v: { smooth: 30, white: 10, shape: { eyes: 10, faceSlim: 12, nose: 8 }, makeup: { lip: 8, blush: 18 } } },
+    v: { smooth: 22, white: 6, shape: { eyes: 5, faceSlim: 6, nose: 4 }, makeup: { lip: 6, blush: 12 } } },
   { id: 'tuoi-tan', name: 'Tươi tắn', hint: 'Da sáng, má hồng',
-    v: { smooth: 42, white: 22, shape: { eyes: 18, faceSlim: 20, nose: 12 }, makeup: { lip: 14, blush: 32, highlight: 25 } } },
+    v: { smooth: 30, white: 12, shape: { eyes: 8, faceSlim: 10, nose: 6 }, makeup: { lip: 10, blush: 20, highlight: 15 } } },
   { id: 'thanh-tu', name: 'Thanh tú', hint: 'Mặt gọn, nổi khối',
-    v: { smooth: 36, white: 14, shape: { eyes: 14, faceSlim: 36, nose: 22, mouth: 8 }, makeup: { lip: 12, blush: 16, brow: 15, contour: 32, highlight: 30 } } },
+    v: { smooth: 26, white: 8, shape: { eyes: 7, faceSlim: 18, nose: 10, mouth: 4 }, makeup: { lip: 8, blush: 10, brow: 10, contour: 20, highlight: 18 } } },
   { id: 'nam', name: 'Nam', hint: 'Da sạch, mày rõ',
-    v: { smooth: 22, white: 0, shape: { faceSlim: 10 }, makeup: { brow: 25, contour: 26, highlight: 10 } } },
+    v: { smooth: 16, white: 0, shape: { faceSlim: 5 }, makeup: { brow: 15, contour: 15, highlight: 6 } } },
 ]
+
+/** Cường độ khi chạm một kiểu lần đầu. */
+export const BEAUTY_DEFAULT = 70
 
 const BEAUTY_SHAPES: ShapeKey[] = ['eyes', 'faceSlim', 'nose', 'mouth']
 
@@ -146,7 +150,7 @@ export const TEMPLATES: Template[] = [
       { kind: 'text', value: 'PHỐ ĐÊM', x: 50, y: 88, size: 8, color: '#9fd8ff', style: 'shadow', font: 'sans' },
       { kind: 'text', value: dotDate(d), x: 50, y: 94, size: 3.4, color: '#e8f4ff', style: 'plain', font: 'mono' },
     ] },
-  { id: 'trong-treo', name: 'Trong trẻo', preset: 'trong', presetAmt: 80, beauty: { id: 'tuoi-tan', amt: 80 },
+  { id: 'trong-treo', name: 'Trong trẻo', preset: 'trong', presetAmt: 80, beauty: { id: 'tuoi-tan', amt: 70 },
     layers: () => [
       { kind: 'sticker', value: '✨', x: 84, y: 12, size: 10, color: '#ffffff' },
       { kind: 'sticker', value: '✨', x: 16, y: 80, size: 7, color: '#ffffff' },

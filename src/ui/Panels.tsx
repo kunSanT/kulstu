@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { flipped, freshRecipe, MAX_LIP, PARAMS, PRESET_GROUPS, PRESETS, RATIOS, rotated, withRatio, type BodyKey, type MakeupKey, type PresetGroup, type PresetId, type ShapeKey } from '../engine/recipe'
-import { applyBeauty, applyMakeupLook, applyTemplate, BEAUTY_LOOKS, BLUSH_SHADES, currentMakeupLook, LIP_SHADES, MAKEUP_LOOKS, TEMPLATES } from '../engine/looks'
+import { applyBeauty, applyMakeupLook, applyTemplate, BEAUTY_DEFAULT, BEAUTY_LOOKS, BLUSH_SHADES, currentMakeupLook, LIP_SHADES, MAKEUP_LOOKS, TEMPLATES } from '../engine/looks'
 import { drawDecorations } from '../engine/decorations'
 import { createRenderer } from '../engine/renderer'
 import { decodeFile, releaseSource, type Source } from '../services/image'
@@ -339,7 +339,7 @@ export function SkinPanel() {
         <button type="button" className="chip" aria-pressed={!look} disabled={!ready} onClick={() => change((r) => applyBeauty(r, null, 0))}>Gốc</button>
         {BEAUTY_LOOKS.map((l) => (
           <button key={l.id} type="button" className="chip" title={l.hint} aria-pressed={look?.id === l.id} disabled={!ready}
-            onClick={() => change((r) => applyBeauty(r, l.id, r.beauty.id === l.id ? r.beauty.amt : 80))}>{l.name}</button>
+            onClick={() => change((r) => applyBeauty(r, l.id, r.beauty.id === l.id ? r.beauty.amt : BEAUTY_DEFAULT))}>{l.name}</button>
         ))}
       </div>
       {look && (
