@@ -3,6 +3,7 @@ import { describeHistory } from '../engine/history'
 import { freshRecipe, outputSize, type PresetId } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
 import { exportImage, type ExportFormat } from '../services/image'
+import { exportSizes } from '../engine/exportSize'
 import { detectPlatform, isPhone } from '../services/save'
 import { listDrafts, type DraftSummary } from '../services/draft'
 import {
@@ -525,14 +526,8 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
   const fmt = format ?? (transparent ? 'png' : 'jpeg')
   const [sizeId, setSizeId] = useState('full')
   const full = outputSize(geo, src.w, src.h)
-  const long = Math.max(full.w, full.h)
-  const sizes = [
-    { id: 'full', name: 'Đầy đủ', k: 1 },
-    { id: 'half', name: 'Một nửa', k: 0.5 },
-    ...(long > 1350 ? [{ id: 'web', name: 'Cạnh dài 1080', k: 1080 / long }] : []),
-  ]
+  const sizes = exportSizes(full.w, full.h)
   const size = sizes.find((s) => s.id === sizeId) ?? sizes[0]
-  const px = (k: number) => `${Math.max(1, Math.round(full.w * k))} × ${Math.max(1, Math.round(full.h * k))} px`
   const close = () => ref.current?.close()
   return (
     <dialog ref={ref} aria-labelledby="exportTitle" onClose={onClose} onClick={(e) => e.target === ref.current && !exporting && close()} onCancel={(e) => exporting && e.preventDefault()}>
@@ -552,10 +547,11 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
         {sizes.map((s) => (
           <label key={s.id}>
             <input type="radio" name="size" checked={size.id === s.id} onChange={() => setSizeId(s.id)} />
-            <span>{s.name}<small>{px(s.k)}</small></span>
+            <span>{s.name}<small>{s.w} × {s.h}{s.upscale ? ' · phóng to' : ''}</small></span>
           </label>
         ))}
       </fieldset>
+      {size.upscale && <p className="note">Ảnh gốc nhỏ hơn {size.name} nên sẽ được phóng to; chi tiết không nét thêm.</p>}
       {fmt === 'jpeg' && <label className="collage-files">
         Chất lượng JPEG {quality}%
         <input type="range" aria-label="Chất lượng JPEG" min={30} max={100} value={quality} disabled={exporting}

@@ -6,7 +6,7 @@ Web app chỉnh ảnh chân dung ngay trong trình duyệt, ưu tiên điện th
 
 ## Tính năng
 
-- Nhập ảnh JPEG, PNG, WebP (HEIC/HEIF nếu trình duyệt hỗ trợ), xuất JPEG hoặc PNG
+- Nhập ảnh JPEG, PNG, WebP (HEIC/HEIF nếu trình duyệt hỗ trợ), xuất JPEG hoặc PNG cỡ gốc, 4K, 1080p, 720p
 - Cắt theo tỷ lệ 1:1, 4:5, 9:16 hoặc tự do; xoay, lật
 - Chỉnh sáng, tương phản, bão hòa, nhiệt độ màu; 31 bộ màu chia 5 nhóm (Chân dung, Phim, Hàn – Nhật, Phong cảnh, Đen trắng) có cường độ
 - **Mẫu ảnh**: 10 phong cách trọn gói (màu, nắng, xoá phông, làm đẹp, trang điểm) áp trong một chạm
@@ -73,6 +73,7 @@ Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm g
 | `test/history.test.ts` | Đặt tên từng bước trong lịch sử chỉnh sửa |
 | `test/looks.test.ts` | Kho bộ màu, làm đẹp một chạm, mẫu trang điểm, đổi/gỡ mẫu ảnh gỡ sạch phần của mẫu cũ, vị trí vùng tạo khối (cả khi mặt nghiêng), nháp cũ |
 | `test/lips.test.ts` | Vùng son bám màu môi thật khi điểm mốc lệch, bỏ lòng miệng và răng, môi nhạt thì giữ viền điểm mốc |
+| `test/exportSize.test.ts` | Kích thước xuất 4K/1080p/720p theo cạnh ngắn, đánh dấu phóng to, 4K không vượt giới hạn canvas của iPhone |
 | `test/sheet.test.ts` | Nấc của bảng chỉnh khi vuốt trên điện thoại |
 | `test/repair.test.ts` | Nguồn model, khung cắt quanh vùng tô, tiến độ và giới hạn thời gian, thông báo lỗi, mảng vá đúng vị trí |
 | `test/modelLoader.test.ts` | Tải model: máy chủ trả HTML, 404, mất mạng, tải thiếu, sai SHA-256, cache |

@@ -154,7 +154,8 @@ export async function exportImage(
       applyPushes(field, recipe.push)
       r.setField(field)
     }
-    const size = outputSize(recipe.geo, tex.width, tex.height)
+    // tính theo ảnh gốc: texture có thể đã bị thu nhỏ cho vừa GPU, nhưng 4K/1080p phải ra đúng cỡ
+    const size = outputSize(recipe.geo, src.w, src.h)
     r.draw(recipe, { outW: Math.max(1, Math.round(size.w * scale)), outH: Math.max(1, Math.round(size.h * scale)) })
     if (r.lost) throw new Error('context lost')
     let out = c
