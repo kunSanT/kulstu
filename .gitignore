@@ -36,3 +36,6 @@ app-tmp
 
 # wrangler
 .wrangler
+
+# dự án Xcode do Capacitor sinh ra trên máy build (xem scripts/ios-setup.mjs)
+ios/

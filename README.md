@@ -73,6 +73,7 @@ Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm g
 | `test/history.test.ts` | Đặt tên từng bước trong lịch sử chỉnh sửa |
 | `test/looks.test.ts` | Kho bộ màu, làm đẹp một chạm, mẫu trang điểm, đổi/gỡ mẫu ảnh gỡ sạch phần của mẫu cũ, vị trí vùng tạo khối (cả khi mặt nghiêng), nháp cũ |
 | `test/lips.test.ts` | Vùng son bám màu môi thật khi điểm mốc lệch, bỏ lòng miệng và răng, môi nhạt thì giữ viền điểm mốc |
+| `test/ios.test.ts` | Phiên bản iOS và giới hạn canvas, nhận biết app gốc, lưu ảnh và rung qua plugin, máy chủ cho phép app iPhone gọi API |
 | `test/exportSize.test.ts` | Kích thước xuất 4K/1080p/720p theo cạnh ngắn, đánh dấu phóng to, 4K không vượt giới hạn canvas của iPhone |
 | `test/sheet.test.ts` | Nấc của bảng chỉnh khi vuốt trên điện thoại |
 | `test/repair.test.ts` | Nguồn model, khung cắt quanh vùng tô, tiến độ và giới hạn thời gian, thông báo lỗi, mảng vá đúng vị trí |
@@ -90,6 +91,15 @@ Cloudflare Workers (đang dùng) hoặc Pages đều được: build command `np
 ### Tải thủ công lên Cloudflare Pages
 
 Chạy `npm run build:pages`, rồi vào **Workers & Pages → Create → Pages → Direct Upload** và tải thư mục `dist-pages`. Địa chỉ beta có dạng `<tên-dự-án>.pages.dev`. Ảnh và bản nháp vẫn lưu trên trình duyệt của người dùng.
+
+## App iPhone (App Store)
+
+Bản web được bọc thành app iPhone bằng Capacitor 8; build, ký và đẩy lên TestFlight chạy trên máy Mac của GitHub Actions,
+không cần Mac riêng. Hướng dẫn từng bước (tài khoản Apple, khoá API, nộp duyệt): [docs/ios.md](docs/ios.md).
+
+- Tối ưu cho iPhone: dựng ảnh tối đa 2× mật độ điểm ảnh, tự dựng lại WebGL khi iOS thu hồi lúc chuyển app, lưu nháp
+  ngay khi rời app, giới hạn cỡ ảnh xuất theo giới hạn canvas của từng bản iOS (16,7 triệu điểm ảnh trước iOS 18)
+- Trong app: lưu ảnh qua bảng Chia sẻ gốc, rung Taptic, gọi API xoá vật thể bằng địa chỉ đầy đủ (worker cho phép CORS từ app)
 
 ## Cấu trúc
 

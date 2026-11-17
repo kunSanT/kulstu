@@ -1,0 +1,82 @@
+# Build app iPhone trên máy Mac của GitHub (không cần Mac riêng).
+# - Chưa có khoá Apple: chỉ build thử cho máy ảo iPhone để chắc chắn app biên dịch được.
+# - Đã thêm khoá (xem docs/ios.md): ký, đóng gói và đẩy thẳng lên TestFlight / App Store Connect.
+# Chạy tay: GitHub → Actions → iOS → Run workflow. Tự chạy khi có thay đổi trên main.
+name: iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Cài gói
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build web
+        run: npm run build
+
+      - name: Dựng dự án Xcode
+        run: npm run ios:setup
+
+      - name: Build thử cho máy ảo (không ký)
+        if: env.ASC_KEY_ID == ''
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            TARGETED_DEVICE_FAMILY=1 CODE_SIGNING_ALLOWED=NO build | tail -n 40
+          echo "::notice::Build thử thành công. Thêm khoá App Store Connect (docs/ios.md) để ký và đẩy lên TestFlight."
+
+      - name: Ký và đẩy lên TestFlight
+        if: env.ASC_KEY_ID != ''
+        run: |
+          set -euo pipefail
+          KEY="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s' "$ASC_KEY_P8" > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          VERSION=$(node -p "require('./package.json').version")
+          BUNDLE=$(node -p "require('./capacitor.config.json').appId")
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/KulStu.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE" \
+            TARGETED_DEVICE_FAMILY=1 MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            "${AUTH[@]}" archive | tail -n 40
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/KulStu.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" \
+            "${AUTH[@]}" | tail -n 40
+          echo "::notice::Đã đẩy bản $VERSION (${{ github.run_number }}) lên App Store Connect. Vài phút sau sẽ hiện trong TestFlight."

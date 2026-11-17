@@ -1,0 +1,12 @@
+{
+  "appId": "vn.kulstu.app",
+  "appName": "KulStu",
+  "webDir": "dist",
+  "backgroundColor": "#0d0d0d",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0d0d0d",
+    "preferredContentMode": "mobile",
+    "limitsNavigationsToAppBoundDomains": false
+  }
+}
