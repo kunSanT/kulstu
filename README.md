@@ -72,6 +72,7 @@ Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm g
 | `test/collage.test.ts` | Bố cục (cả khung không vuông và ảnh lớn), khoảng cách, bo góc, độ rộng từng ảnh, tay kéo, đổi chỗ bằng phím, cân màu |
 | `test/history.test.ts` | Đặt tên từng bước trong lịch sử chỉnh sửa |
 | `test/looks.test.ts` | Kho bộ màu, làm đẹp một chạm, mẫu trang điểm, đổi/gỡ mẫu ảnh gỡ sạch phần của mẫu cũ, vị trí vùng tạo khối (cả khi mặt nghiêng), nháp cũ |
+| `test/lips.test.ts` | Vùng son bám màu môi thật khi điểm mốc lệch, bỏ lòng miệng và răng, môi nhạt thì giữ viền điểm mốc |
 | `test/sheet.test.ts` | Nấc của bảng chỉnh khi vuốt trên điện thoại |
 | `test/repair.test.ts` | Nguồn model, khung cắt quanh vùng tô, tiến độ và giới hạn thời gian, thông báo lỗi, mảng vá đúng vị trí |
 | `test/modelLoader.test.ts` | Tải model: máy chủ trả HTML, 404, mất mạng, tải thiếu, sai SHA-256, cache |

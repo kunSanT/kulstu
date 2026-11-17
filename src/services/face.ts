@@ -2,6 +2,7 @@
 // Model và WASM được phục vụ từ chính trang này (public/), chỉ tải khi mở công cụ làm mịn.
 
 import type { Features } from '../engine/recipe'
+import { refineLipMask } from '../engine/lips'
 
 type Pt = { x: number; y: number }
 type Landmarker = { detect(img: TexImageSource): { faceLandmarks: Pt[][] } }
@@ -63,6 +64,86 @@ export function makeupMask(
   g.fillStyle = '#f00'
   drawLips(g)
   return c
+}
+
+/** Vòng kín đi mềm qua các điểm (đường cong qua trung điểm), để viền môi không gãy góc. */
+function smoothRing(g: CanvasRenderingContext2D, pts: Pt[]) {
+  const n = pts.length
+  if (n < 3) return
+  const mid = (a: Pt, b: Pt) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+  const start = mid(pts[n - 1], pts[0])
+  g.moveTo(start.x, start.y)
+  for (let i = 0; i < n; i++) {
+    const m = mid(pts[i], pts[(i + 1) % n])
+    g.quadraticCurveTo(pts[i].x, pts[i].y, m.x, m.y)
+  }
+  g.closePath()
+}
+
+/**
+ * Kéo kênh son (đỏ) của mặt nạ trang điểm về đúng viền môi thật: nới vùng điểm mốc ra một chút,
+ * bỏ lòng miệng, rồi giữ những điểm đỏ như môi. Ảnh không tách được màu môi thì giữ nguyên.
+ */
+export function refineLips(mask: HTMLCanvasElement, image: CanvasImageSource & { width: number; height: number }, outer: Pt[], inner: Pt[]) {
+  const W = mask.width
+  const H = mask.height
+  const o = outer.map((p) => ({ x: p.x * W, y: p.y * H }))
+  const q = inner.map((p) => ({ x: p.x * W, y: p.y * H }))
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  for (const p of o) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y) }
+  const lipH = y1 - y0
+  if (!(lipH > 2) || !(x1 - x0 > 4)) return
+  const pad = Math.max(4, lipH * .45)
+  const rx = Math.max(0, Math.floor(x0 - pad))
+  const ry = Math.max(0, Math.floor(y0 - pad))
+  const rw = Math.min(W, Math.ceil(x1 + pad)) - rx
+  const rh = Math.min(H, Math.ceil(y1 + pad)) - ry
+  if (rw < 4 || rh < 4) return
+  const layer = (draw: (g: CanvasRenderingContext2D) => void) => {
+    const c = document.createElement('canvas')
+    c.width = rw
+    c.height = rh
+    const g = c.getContext('2d', { willReadFrequently: true })!
+    g.translate(-rx, -ry)
+    draw(g)
+    return g.getImageData(0, 0, rw, rh).data
+  }
+  const pixels = layer((g) => g.drawImage(image, 0, 0, image.width, image.height, 0, 0, W, H))
+  const grow = Math.max(1.5, lipH * .14)
+  const zone = layer((g) => {
+    g.fillStyle = '#fff'
+    g.strokeStyle = '#fff'
+    g.lineJoin = 'round'
+    g.lineWidth = grow * 2
+    g.beginPath()
+    smoothRing(g, o)
+    g.fill()
+    g.stroke()
+    // lòng miệng: thu nhỏ một chút để không ăn vào môi
+    g.globalCompositeOperation = 'destination-out'
+    const c = q.reduce((a, p) => ({ x: a.x + p.x / q.length, y: a.y + p.y / q.length }), { x: 0, y: 0 })
+    g.beginPath()
+    smoothRing(g, q.map((p) => ({ x: c.x + (p.x - c.x) * .8, y: c.y + (p.y - c.y) * .8 })))
+    g.fill()
+  })
+  const core = layer((g) => {
+    g.fillStyle = '#fff'
+    g.beginPath()
+    smoothRing(g, o)
+    smoothRing(g, q)
+    g.fill('evenodd')
+  })
+  const pick = (rgba: Uint8ClampedArray) => {
+    const out = new Uint8ClampedArray(rw * rh)
+    for (let i = 0; i < out.length; i++) out[i] = rgba[i * 4]
+    return out
+  }
+  const weights = refineLipMask(pixels, pick(zone), pick(core), rw, rh)
+  if (!weights) return
+  const g = mask.getContext('2d', { willReadFrequently: true })!
+  const data = g.getImageData(rx, ry, rw, rh)
+  for (let i = 0; i < weights.length; i++) data.data[i * 4] = weights[i]
+  g.putImageData(data, rx, ry)
 }
 
 export type SculptGeom = {
@@ -264,12 +345,11 @@ export async function detectFace(image: HTMLCanvasElement): Promise<FaceResult> 
   })
   features.makeupMask = makeupMask(image.width, image.height, cheeks, (features.eyeL.r + features.eyeR.r) * 0.58, (g) => {
     g.beginPath()
-    for (const ids of [KEEP_SHARP[4], INNER_LIP]) {
-      ring(ids).forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y))
-      g.closePath()
-    }
+    smoothRing(g, ring(KEEP_SHARP[4]))
+    smoothRing(g, ring(INNER_LIP))
     g.fill('evenodd')
   }, lids)
+  refineLips(features.makeupMask, image, ring(KEEP_SHARP[4]), ring(INNER_LIP))
   features.sculptMask = sculptMask(image.width, image.height, {
     eyeL: features.eyeL, eyeR: features.eyeR, mouth: features.mouth,
     edgeL: best[234], edgeR: best[454],
