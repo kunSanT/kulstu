@@ -2,6 +2,7 @@
 // Model và WASM được phục vụ từ chính trang này (public/), chỉ tải khi mở công cụ làm mịn.
 
 import type { Features } from '../engine/recipe'
+import { refineLipMask } from '../engine/lips'
 
 type Pt = { x: number; y: number }
 type Landmarker = { detect(img: TexImageSource): { faceLandmarks: Pt[][] } }
@@ -65,6 +66,234 @@ export function makeupMask(
   return c
 }
 
+/** Vòng kín đi mềm qua các điểm (đường cong qua trung điểm), để viền môi không gãy góc. */
+function smoothRing(g: CanvasRenderingContext2D, pts: Pt[]) {
+  const n = pts.length
+  if (n < 3) return
+  const mid = (a: Pt, b: Pt) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+  const start = mid(pts[n - 1], pts[0])
+  g.moveTo(start.x, start.y)
+  for (let i = 0; i < n; i++) {
+    const m = mid(pts[i], pts[(i + 1) % n])
+    g.quadraticCurveTo(pts[i].x, pts[i].y, m.x, m.y)
+  }
+  g.closePath()
+}
+
+/**
+ * Kéo kênh son (đỏ) của mặt nạ trang điểm về đúng viền môi thật: nới vùng điểm mốc ra một chút,
+ * bỏ lòng miệng, rồi giữ những điểm đỏ như môi. Ảnh không tách được màu môi thì giữ nguyên.
+ */
+export function refineLips(mask: HTMLCanvasElement, image: CanvasImageSource & { width: number; height: number }, outer: Pt[], inner: Pt[]) {
+  const W = mask.width
+  const H = mask.height
+  const o = outer.map((p) => ({ x: p.x * W, y: p.y * H }))
+  const q = inner.map((p) => ({ x: p.x * W, y: p.y * H }))
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  for (const p of o) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y) }
+  const lipH = y1 - y0
+  if (!(lipH > 2) || !(x1 - x0 > 4)) return
+  const pad = Math.max(4, lipH * .45)
+  const rx = Math.max(0, Math.floor(x0 - pad))
+  const ry = Math.max(0, Math.floor(y0 - pad))
+  const rw = Math.min(W, Math.ceil(x1 + pad)) - rx
+  const rh = Math.min(H, Math.ceil(y1 + pad)) - ry
+  if (rw < 4 || rh < 4) return
+  const layer = (draw: (g: CanvasRenderingContext2D) => void) => {
+    const c = document.createElement('canvas')
+    c.width = rw
+    c.height = rh
+    const g = c.getContext('2d', { willReadFrequently: true })!
+    g.translate(-rx, -ry)
+    draw(g)
+    return g.getImageData(0, 0, rw, rh).data
+  }
+  const pixels = layer((g) => g.drawImage(image, 0, 0, image.width, image.height, 0, 0, W, H))
+  const grow = Math.max(1.5, lipH * .14)
+  const zone = layer((g) => {
+    g.fillStyle = '#fff'
+    g.strokeStyle = '#fff'
+    g.lineJoin = 'round'
+    g.lineWidth = grow * 2
+    g.beginPath()
+    smoothRing(g, o)
+    g.fill()
+    g.stroke()
+    // lòng miệng: thu nhỏ một chút để không ăn vào môi
+    g.globalCompositeOperation = 'destination-out'
+    const c = q.reduce((a, p) => ({ x: a.x + p.x / q.length, y: a.y + p.y / q.length }), { x: 0, y: 0 })
+    g.beginPath()
+    smoothRing(g, q.map((p) => ({ x: c.x + (p.x - c.x) * .8, y: c.y + (p.y - c.y) * .8 })))
+    g.fill()
+  })
+  const core = layer((g) => {
+    g.fillStyle = '#fff'
+    g.beginPath()
+    smoothRing(g, o)
+    smoothRing(g, q)
+    g.fill('evenodd')
+  })
+  const pick = (rgba: Uint8ClampedArray) => {
+    const out = new Uint8ClampedArray(rw * rh)
+    for (let i = 0; i < out.length; i++) out[i] = rgba[i * 4]
+    return out
+  }
+  const weights = refineLipMask(pixels, pick(zone), pick(core), rw, rh)
+  if (!weights) return
+  const g = mask.getContext('2d', { willReadFrequently: true })!
+  const data = g.getImageData(rx, ry, rw, rh)
+  for (let i = 0; i < weights.length; i++) data.data[i * 4] = weights[i]
+  g.putImageData(data, rx, ry)
+}
+
+export type SculptGeom = {
+  eyeL: Pt
+  eyeR: Pt
+  mouth: Pt
+  /** Hai mép mặt ngang tầm gò má. */
+  edgeL: Pt
+  edgeR: Pt
+  /** Viền hai chân mày (toạ độ chuẩn hoá). */
+  brows: Pt[][]
+  /** Đường viền khuôn mặt (toạ độ chuẩn hoá), dùng cho vùng tạo khối. */
+  oval: Pt[]
+}
+
+/** Chân mày dựng từ vị trí mắt, cho ảnh mẫu không có điểm mốc. */
+export function browArc(eye: Pt, half: number, lift: number, mirror: boolean): Pt[] {
+  const top: Pt[] = []
+  const bottom: Pt[] = []
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8
+    const x = eye.x + (mirror ? 1 : -1) * (t - .45) * half * 2.3
+    const arch = Math.sin(Math.min(1, t * 1.35) * Math.PI) * lift * .35
+    const thick = lift * (.28 - .16 * t)
+    top.push({ x, y: eye.y - lift - arch - thick })
+    bottom.push({ x, y: eye.y - lift - arch + thick })
+  }
+  return [...top, ...bottom.reverse()]
+}
+
+/** Khung khuôn mặt trên mặt nạ cw×ch: gốc giữa hai mắt, u ngang, v dọc; half = nửa bề ngang mặt, down = mắt→miệng. */
+function faceFrame(geo: SculptGeom, cw: number, ch: number) {
+  const px = (p: Pt) => ({ x: p.x * cw, y: p.y * ch })
+  const eL = px(geo.eyeL)
+  const eR = px(geo.eyeR)
+  const o = { x: (eL.x + eR.x) / 2, y: (eL.y + eR.y) / 2 }
+  const span = Math.hypot(eR.x - eL.x, eR.y - eL.y) || 1
+  const u = { x: (eR.x - eL.x) / span, y: (eR.y - eL.y) / span }
+  const v = { x: -u.y, y: u.x }
+  const sL = px(geo.edgeL)
+  const sR = px(geo.edgeR)
+  const half = Math.max(span * .9, Math.hypot(sR.x - sL.x, sR.y - sL.y) / 2)
+  const m = px(geo.mouth)
+  const down = Math.max(span * .5, (m.x - o.x) * v.x + (m.y - o.y) * v.y)
+  const at = (x: number, y: number) => ({ x: o.x + u.x * x * half + v.x * y * down, y: o.y + u.y * x * half + v.y * y * down })
+  const local = (p: Pt) => ({ x: ((p.x - o.x) * u.x + (p.y - o.y) * u.y) / half, y: ((p.x - o.x) * v.x + (p.y - o.y) * v.y) / down })
+  return { px, at, local, half, down }
+}
+
+export type Streak = { channel: 'light'; a: Pt; b: Pt; thick: number; strength: number }
+
+/** Các vùng được phép bắt sáng (toạ độ điểm ảnh); shader chỉ làm sáng chỗ vốn đã sáng hơn xung quanh. */
+export function sculptStreaks(geo: SculptGeom, cw: number, ch: number): Streak[] {
+  const { at, half } = faceFrame(geo, cw, ch)
+  const out: Streak[] = []
+  const add = (a: Pt, b: Pt, thick: number, strength: number) => out.push({ channel: 'light', a, b, thick: thick * half, strength })
+  for (const side of [-1, 1]) add(at(side * .66, .18), at(side * .3, .4), .16, .9) // gò má
+  add(at(0, -.2), at(0, .6), .1, 1) // sống mũi
+  add(at(0, -1.05), at(0, -.55), .3, .7) // giữa trán
+  add(at(-.12, 1.45), at(.12, 1.45), .16, .6) // cằm
+  return out
+}
+
+/**
+ * Độ đậm tạo khối cho từng điểm ảnh của mặt nạ cw×ch: tối dần về phía viền mặt (thái dương, má, hàm),
+ * gần như không chạm phần giữa mặt và đỉnh trán. Trả về 0–1.
+ */
+export function contourRim(geo: SculptGeom, cw: number, ch: number): Float32Array {
+  const out = new Float32Array(cw * ch)
+  const { px, local, half } = faceFrame(geo, cw, ch)
+  const poly = geo.oval.map(px)
+  if (poly.length < 3) return out
+  const width = half * .3
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  for (const p of poly) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y) }
+  const smooth = (e0: number, e1: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
+    return t * t * (3 - 2 * t)
+  }
+  for (let y = Math.max(0, Math.floor(y0)); y < Math.min(ch, Math.ceil(y1)); y++) {
+    for (let x = Math.max(0, Math.floor(x0)); x < Math.min(cw, Math.ceil(x1)); x++) {
+      const qx = x + .5
+      const qy = y + .5
+      let inside = false
+      let best = Infinity
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const a = poly[j]
+        const b = poly[i]
+        if ((a.y > qy) !== (b.y > qy) && qx < a.x + ((qy - a.y) * (b.x - a.x)) / (b.y - a.y)) inside = !inside
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const t = Math.max(0, Math.min(1, ((qx - a.x) * dx + (qy - a.y) * dy) / (dx * dx + dy * dy || 1)))
+        best = Math.min(best, Math.hypot(qx - a.x - t * dx, qy - a.y - t * dy))
+      }
+      if (!inside || best >= width) continue
+      const l = local({ x: qx, y: qy })
+      // hai bên mặt và đường hàm; đỉnh trán và giữa cằm nhẹ hơn nhiều
+      const where = Math.max(smooth(.3, .8, Math.abs(l.x)) * (1 - .6 * smooth(-.4, -1.1, l.y)), .4 * smooth(1.2, 1.6, l.y))
+      out[y * cw + x] = (1 - best / width) ** 1.6 * where
+    }
+  }
+  return out
+}
+
+/** Đỏ = tạo khối tối, xanh lá = vùng được bắt sáng, xanh lam = chân mày. */
+export function sculptMask(w: number, h: number, geo: SculptGeom) {
+  const c = document.createElement('canvas')
+  const scale = 384 / Math.max(w, h)
+  c.width = Math.max(1, Math.round(w * scale))
+  c.height = Math.max(1, Math.round(h * scale))
+  const g = c.getContext('2d')!
+  const rim = contourRim(geo, c.width, c.height)
+  const data = g.createImageData(c.width, c.height)
+  for (let i = 0; i < rim.length; i++) {
+    data.data[i * 4] = Math.round(rim[i] * 255)
+    data.data[i * 4 + 3] = 255
+  }
+  g.putImageData(data, 0, 0)
+  g.globalCompositeOperation = 'lighter'
+  for (const { a, b, thick, strength } of sculptStreaks(geo, c.width, c.height)) {
+    const r = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y) / 2, thick)
+    g.save()
+    g.translate((a.x + b.x) / 2, (a.y + b.y) / 2)
+    g.rotate(Math.atan2(b.y - a.y, b.x - a.x))
+    g.scale(1, Math.max(.05, thick / r))
+    const gradient = g.createRadialGradient(0, 0, 0, 0, 0, r)
+    gradient.addColorStop(0, `rgba(0,255,0,${strength})`)
+    gradient.addColorStop(.5, `rgba(0,255,0,${strength * .6})`)
+    gradient.addColorStop(1, 'rgba(0,255,0,0)')
+    g.fillStyle = gradient
+    g.fillRect(-r, -r, r * 2, r * 2)
+    g.restore()
+  }
+  // chân mày: tô đặc phần lõi, viền ngoài nhạt dần
+  const span = Math.hypot((geo.eyeR.x - geo.eyeL.x) * c.width, (geo.eyeR.y - geo.eyeL.y) * c.height)
+  g.lineJoin = 'round'
+  for (const brow of geo.brows) {
+    if (brow.length < 3) continue
+    g.beginPath()
+    brow.forEach((p, i) => (i ? g.lineTo(p.x * c.width, p.y * c.height) : g.moveTo(p.x * c.width, p.y * c.height)))
+    g.closePath()
+    g.fillStyle = 'rgba(0,0,255,.62)'
+    g.fill()
+    g.strokeStyle = 'rgba(0,0,255,.3)'
+    g.lineWidth = Math.max(1, span * .05)
+    g.stroke()
+  }
+  return c
+}
+
 let pending: Promise<Landmarker> | null = null
 
 function loadLandmarker(): Promise<Landmarker> {
@@ -116,12 +345,17 @@ export async function detectFace(image: HTMLCanvasElement): Promise<FaceResult> 
   })
   features.makeupMask = makeupMask(image.width, image.height, cheeks, (features.eyeL.r + features.eyeR.r) * 0.58, (g) => {
     g.beginPath()
-    for (const ids of [KEEP_SHARP[4], INNER_LIP]) {
-      ring(ids).forEach((p, i) => i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y))
-      g.closePath()
-    }
+    smoothRing(g, ring(KEEP_SHARP[4]))
+    smoothRing(g, ring(INNER_LIP))
     g.fill('evenodd')
   }, lids)
+  refineLips(features.makeupMask, image, ring(KEEP_SHARP[4]), ring(INNER_LIP))
+  features.sculptMask = sculptMask(image.width, image.height, {
+    eyeL: features.eyeL, eyeR: features.eyeR, mouth: features.mouth,
+    edgeL: best[234], edgeR: best[454],
+    brows: [ring(KEEP_SHARP[2]), ring(KEEP_SHARP[3])],
+    oval: ring(OVAL),
+  })
   return {
     count: faces.length,
     mask: buildMask(image.width, image.height, ring(OVAL), KEEP_SHARP.map(ring)),

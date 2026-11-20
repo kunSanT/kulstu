@@ -1,5 +1,6 @@
 import type { Field } from './liquify'
 import type { Segment } from '../services/segment'
+import { blushShade, lipShade } from './looks'
 import { LEG_GAIN, MAX_LIP, PRESETS, WARP_COUNT, orientedSize, outputSize, warpSet, type Body, type Features, type Recipe } from './recipe'
 
 const VS = `#version 300 es
@@ -15,6 +16,8 @@ uniform vec4 crop; uniform int rot; uniform vec2 flip;
 uniform vec4 adj; uniform vec4 pre; uniform vec4 preX; uniform float preAmt;
 uniform float smoothAmt; uniform vec2 rad; uniform float white;
 uniform sampler2D makeupMask; uniform vec3 makeup; uniform float sharp;
+uniform sampler2D sculptMask; uniform vec3 makeup2; uniform vec4 lipTint; uniform vec3 blushTint;
+uniform vec3 preSh; uniform vec3 preHi;
 uniform float denoise; uniform float vignette; uniform vec2 tonal;
 uniform sampler2D personMask; uniform vec4 background; uniform bool replaceBackground; uniform bool hasPersonMask;
 uniform sampler2D hairMask; uniform float hairSmooth;
@@ -127,11 +130,30 @@ void main(){
       float detail = luma(base.rgb) - luma((a.rgb*a.a+b.rgb*b.a+e.rgb*e.a+f.rgb*f.a)/max(weight,.001));
       c = clamp(c + clamp(detail,-.15,.15)*sharp*(1.-.8*sw)*step(.001,weight),0.,1.);
     }
+    if(any(greaterThan(makeup2, vec3(0.)))){
+      // tạo khối và bắt sáng chỉ trong vùng da mặt; chân mày nằm ngoài mặt nạ da nên không nhân m
+      vec3 sculpt = texture(sculptMask, s).rgb;
+      float y = luma(base.rgb);
+      // tạo khối: viền mặt tối dần, hơi ấm như phấn khối; không nhân m vì viền mặt nạ da đã mềm sẵn
+      float shade = sculpt.r*makeup2.y*smoothstep(.04,.3,y);
+      c *= 1.-shade*vec3(.2,.24,.28);
+      // bắt sáng: chỉ nâng những chỗ vốn sáng hơn vùng xung quanh, nên đi theo khối mặt thật
+      if(sculpt.g>.001 && makeup2.z>0.){
+        vec2 far = rad*14.;
+        float around = .25*(luma(textureLod(img,s+vec2(far.x,0.),lod+2.).rgb) + luma(textureLod(img,s-vec2(far.x,0.),lod+2.).rgb)
+          + luma(textureLod(img,s+vec2(0.,far.y),lod+2.).rgb) + luma(textureLod(img,s-vec2(0.,far.y),lod+2.).rgb));
+        float lit = smoothstep(-.02,.07,y-around);
+        float glow = sculpt.g*m*makeup2.z*lit*(1.-smoothstep(.8,.98,y));
+        c += (1.-c)*glow*vec3(.26,.25,.23);
+      }
+      float brow = sculpt.b*makeup2.x*smoothstep(.03,.18,y);
+      c *= 1.-brow*vec3(.34,.4,.46);
+    }
     if(any(greaterThan(makeup, vec3(0.)))){
       vec3 coverage = texture(makeupMask, s).rgb;
       float y = luma(base.rgb);
       float blush = coverage.g*m*makeup.y*makeup.y*smoothstep(.03,.25,y);
-      c = tintMakeup(c, vec3(.105,-.032,.015), blush);
+      c = tintMakeup(c, blushTint, blush);
       if(coverage.r>0. && makeup.x>0.){
         // Làm mềm mép từ phía trong để màu vẫn nằm trong môi khi hé miệng.
         vec2 dx = vec2(rad.x*.75,0.);
@@ -140,7 +162,8 @@ void main(){
           + texture(makeupMask,s+dy).r + texture(makeupMask,s-dy).r);
         float gloss = 1.-.7*smoothstep(.5,.9,y);
         float lip = coverage.r*inner*makeup.x*gloss*smoothstep(.025,.14,y);
-        c = tintMakeup(c, vec3(.20,-.065,.025), lip);
+        c = tintMakeup(c, lipTint.rgb, lip);
+        c *= 1.-lipTint.a*min(1.,lip*3.);
       }
       float shadow = coverage.b*makeup.z*smoothstep(.04,.3,y);
       c = tintMakeup(c, vec3(.055,-.029,.036), shadow);
@@ -175,7 +198,12 @@ void main(){
       }
       c = mix(c,sum/weight,smoothstep(0.,.4,blur));
     }
-    c = mix(c, grade(c, pre, preX.xyz, preX.w), preAmt);
+    if(preAmt>0.){
+      vec3 g = grade(c, pre, preX.xyz, preX.w);
+      float l = luma(g);
+      g = clamp(g + preSh*(1.-smoothstep(0.,.6,l)) + preHi*smoothstep(.4,1.,l), 0., 1.);
+      c = mix(c, g, preAmt);
+    }
     c = mix(c, clamp(c*colorMatch.a+colorMatch.rgb,0.,1.), matchAmount);
     c = grade(c, adj, vec3(0), 0.);
     if(sunlight>0.){
@@ -306,6 +334,9 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
   const blurTex = makeTex(8)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4))
   gl.uniform1i(U('blurMask'), 8)
+  const sculptTex = makeTex(9)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4))
+  gl.uniform1i(U('sculptMask'), 9)
 
   let tw = 1
   let th = 1
@@ -369,6 +400,11 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
         gl.bindTexture(gl.TEXTURE_2D, makeupTex)
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, f.makeupMask)
       }
+      if (f?.sculptMask && f.sculptMask !== feat?.sculptMask) {
+        gl.activeTexture(gl.TEXTURE9)
+        gl.bindTexture(gl.TEXTURE_2D, sculptTex)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, f.sculptMask)
+      }
       feat = f
       body = b
     },
@@ -415,6 +451,8 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
       gl.uniform4f(U('pre'), p?.b ?? 0, p?.c ?? 0, p?.s ?? 0, p?.t ?? 0)
       gl.uniform4f(U('preX'), p?.tint[0] ?? 0, p?.tint[1] ?? 0, p?.tint[2] ?? 0, p?.fade ?? 0)
       gl.uniform1f(U('preAmt'), p ? st.preset.amt / 100 : 0)
+      gl.uniform3f(U('preSh'), ...(p?.sh ?? [0, 0, 0] as const))
+      gl.uniform3f(U('preHi'), ...(p?.hi ?? [0, 0, 0] as const))
       // bán kính làm mịn tính theo cạnh dài của ảnh nên preview và export cho kết quả tương đương
       const r = Math.max(tw, th) * 0.0022
       gl.uniform1f(U('smoothAmt'), hasMask ? st.smooth / 100 : 0)
@@ -433,6 +471,11 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
       gl.uniform1f(U('vignette'), st.adj.vignette / 100)
       gl.uniform3f(U('makeup'), feat?.makeupMask ? Math.min(MAX_LIP, st.makeup.lip) / 100 : 0,
         feat?.makeupMask ? st.makeup.blush / 100 : 0, feat?.makeupMask ? st.makeup.shadow / 100 : 0)
+      const sculpt = !!feat?.sculptMask
+      gl.uniform3f(U('makeup2'), sculpt ? st.makeup.brow / 100 : 0, sculpt ? st.makeup.contour / 100 : 0, sculpt ? st.makeup.highlight / 100 : 0)
+      const lipColor = lipShade(st.shade.lip)
+      gl.uniform4f(U('lipTint'), ...lipColor.tint, lipColor.dark)
+      gl.uniform3f(U('blushTint'), ...blushShade(st.shade.blush).tint)
       const long = Math.max(tw, th)
       gl.uniform2f(U('asp'), tw / long, th / long)
       const ws = warpSet(st, feat, body)
@@ -468,6 +511,7 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
       gl.deleteTexture(personTex)
       gl.deleteTexture(hairTex)
       gl.deleteTexture(blurTex)
+      gl.deleteTexture(sculptTex)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
     },
   }

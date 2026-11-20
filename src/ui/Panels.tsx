@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { flipped, freshRecipe, MAX_LIP, PARAMS, PRESETS, RATIOS, rotated, withRatio, type BodyKey, type PresetId, type ShapeKey } from '../engine/recipe'
+import { flipped, freshRecipe, MAX_LIP, PARAMS, PRESET_GROUPS, PRESETS, RATIOS, rotated, withRatio, type BodyKey, type MakeupKey, type PresetGroup, type PresetId, type ShapeKey } from '../engine/recipe'
+import { applyBeauty, applyMakeupLook, applyTemplate, BEAUTY_DEFAULT, BEAUTY_LOOKS, BLUSH_SHADES, currentMakeupLook, LIP_SHADES, MAKEUP_LOOKS, TEMPLATES } from '../engine/looks'
+import { drawDecorations } from '../engine/decorations'
 import { createRenderer } from '../engine/renderer'
 import { decodeFile, releaseSource, type Source } from '../services/image'
 import { matchColors } from '../engine/colorMatch'
-import { repairAvailable } from '../services/repair'
+import { repairAvailable, useServer } from '../services/repair'
 import { change, clearRepairSelection, commit, ensureBody, ensureFace, getState, live, runRepair, setBrush, setEraseSize, setHealTool, setParam, setPushSize, setSkinBrush, setSmoothSize, toast, undoRepairStroke, useStore } from '../store'
 import { Band } from './Band'
 
@@ -123,20 +125,26 @@ function AdjustmentBands({ params }: { params: typeof PARAMS }) {
 
 const thumbCache = new WeakMap<Source, Record<string, string>>()
 
+/** Ô vuông giữa ảnh (lệch lên trên một chút để thấy mặt), dùng cho ảnh xem thử. */
+function thumbCrop(src: Source, w: number, h: number) {
+  const crop = document.createElement('canvas')
+  crop.width = w
+  crop.height = h
+  const p = src.preview
+  const k = Math.min(p.width / w, p.height / h)
+  crop.getContext('2d')!.drawImage(p, (p.width - w * k) / 2, (p.height - h * k) / 2.6, w * k, h * k, 0, 0, w, h)
+  return crop
+}
+
 function presetThumbs(src: Source): Record<string, string> {
   const hit = thumbCache.get(src)
   if (hit) return hit
   const out: Record<string, string> = {}
   try {
     const side = 144
-    const crop = document.createElement('canvas')
-    crop.width = crop.height = side
-    const p = src.preview
-    const m = Math.min(p.width, p.height)
-    crop.getContext('2d')!.drawImage(p, (p.width - m) / 2, (p.height - m) / 2.6, m, m, 0, 0, side, side)
     const c = document.createElement('canvas')
     const r = createRenderer(c, { preserveDrawingBuffer: true })
-    r.setImage(crop, side, side)
+    r.setImage(thumbCrop(src, side, side), side, side)
     for (const id of [null, ...PRESETS.map((x) => x.id)]) {
       const st = freshRecipe()
       st.preset = { id, amt: 100 }
@@ -155,14 +163,22 @@ export function PresetPanel() {
   const preset = useStore((s) => s.recipe.preset)
   const src = useStore((s) => s.src)!
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
+  const cur = PRESETS.find((p) => p.id === preset.id)
+  const [group, setGroup] = useState<PresetGroup>(cur?.group ?? 'portrait')
   useEffect(() => setThumbs(presetThumbs(src)), [src])
   const pick = (id: PresetId | null) => change((r) => ({ ...r, preset: { ...r.preset, id } }))
-  const cur = PRESETS.find((p) => p.id === preset.id)
   return (
     <>
+      <div className="chips" role="group" aria-label="Nhóm bộ màu">
+        {PRESET_GROUPS.map((g) => (
+          <button key={g.id} type="button" className="chip" aria-pressed={group === g.id} onClick={() => setGroup(g.id)}>
+            {g.name}{cur?.group === g.id && group !== g.id && <b className="changed">•</b>}
+          </button>
+        ))}
+      </div>
       <div className="presets" role="group" aria-label="Bộ màu">
-        {[{ id: null, name: 'Gốc' }, ...PRESETS].map((p) => (
-          <button key={p.id ?? 'none'} type="button" className="preset" aria-pressed={preset.id === p.id} onClick={() => pick(p.id)}>
+        {[{ id: null, name: 'Gốc', hint: 'Bỏ bộ màu' }, ...PRESETS.filter((p) => p.group === group)].map((p) => (
+          <button key={p.id ?? 'none'} type="button" className="preset" title={p.hint} aria-pressed={preset.id === p.id} onClick={() => pick(p.id)}>
             <span className="preset-img" style={{ backgroundImage: thumbs[p.id ?? 'none'] ? `url(${thumbs[p.id ?? 'none']})` : undefined }} />
             {p.name}
           </button>
@@ -179,6 +195,72 @@ export function PresetPanel() {
         onLive={(v) => live((r) => ({ ...r, preset: { ...r.preset, amt: v } }))}
         onCommit={commit}
       />
+      {cur && <p className="note">{cur.hint}</p>}
+    </>
+  )
+}
+
+/* ---------- Mẫu ảnh ---------- */
+
+const templateCache = new WeakMap<Source, Record<string, string>>()
+
+function templateThumbs(src: Source): Record<string, string> {
+  const hit = templateCache.get(src)
+  if (hit) return hit
+  const out: Record<string, string> = {}
+  try {
+    const w = 128
+    const h = 160
+    const c = document.createElement('canvas')
+    const r = createRenderer(c, { preserveDrawingBuffer: true })
+    r.setImage(thumbCrop(src, w, h), w, h)
+    const flat = document.createElement('canvas')
+    flat.width = w
+    flat.height = h
+    const g = flat.getContext('2d')!
+    for (const id of [null, ...TEMPLATES.map((t) => t.id)]) {
+      // ảnh xem thử chỉ có màu và lớp chữ; làm đẹp cần khuôn mặt nên bỏ qua ở đây
+      const st = applyTemplate(freshRecipe(), id)
+      r.draw(st)
+      g.clearRect(0, 0, w, h)
+      g.drawImage(c, 0, 0)
+      drawDecorations(flat, st.decorations)
+      out[id ?? 'none'] = flat.toDataURL('image/jpeg', 0.82)
+    }
+    r.dispose()
+  } catch {
+    /* để trống ô xem thử */
+  }
+  templateCache.set(src, out)
+  return out
+}
+
+export function TemplatePanel() {
+  const template = useStore((s) => s.recipe.template)
+  const src = useStore((s) => s.src)!
+  const [thumbs, setThumbs] = useState<Record<string, string>>({})
+  useEffect(() => setThumbs(templateThumbs(src)), [src])
+  const pick = (id: string | null) => change((r) => applyTemplate(r, id))
+  const cur = TEMPLATES.find((t) => t.id === template)
+  return (
+    <>
+      <div className="presets templates" role="group" aria-label="Mẫu ảnh">
+        <button type="button" className="preset" aria-pressed={!template} onClick={() => pick(null)}>
+          <span className="preset-img tall" style={{ backgroundImage: thumbs.none ? `url(${thumbs.none})` : undefined }} />
+          Không mẫu
+        </button>
+        {TEMPLATES.map((t) => (
+          <button key={t.id} type="button" className="preset" title={t.hint} aria-pressed={template === t.id} onClick={() => pick(t.id)}>
+            <span className="preset-img tall" style={{ backgroundImage: thumbs[t.id] ? `url(${thumbs[t.id]})` : undefined }} />
+            {t.name}
+          </button>
+        ))}
+      </div>
+      <p className="note">
+        {cur
+          ? `${cur.name}: ${cur.hint.toLowerCase()}${cur.beauty || cur.makeup ? ', có làm đẹp cho khuôn mặt' : ''}. Vẫn chỉnh tiếp được từng phần.`
+          : 'Chạm một phong cách để áp màu, ánh sáng và làm đẹp trong một lần.'}
+      </p>
     </>
   )
 }
@@ -205,25 +287,65 @@ export function SunlightPanel() {
   )
 }
 
+function Swatches({ label, items, value, disabled, onPick }: {
+  label: string
+  items: { id: string; name: string; swatch: string }[]
+  value: string
+  disabled?: boolean
+  onPick: (id: string) => void
+}) {
+  return (
+    <div className="swatches" role="radiogroup" aria-label={label}>
+      {items.map((item) => (
+        <button key={item.id} type="button" role="radio" className="swatch" aria-checked={value === item.id} disabled={disabled}
+          title={item.name} aria-label={item.name} style={{ '--swatch': item.swatch } as React.CSSProperties} onClick={() => onPick(item.id)} />
+      ))}
+    </div>
+  )
+}
+
+const MAKEUP_BANDS: { k: MakeupKey; name: string; max: number }[] = [
+  { k: 'lip', name: 'Son môi', max: MAX_LIP },
+  { k: 'blush', name: 'Má hồng', max: 100 },
+  { k: 'shadow', name: 'Phấn mắt', max: 60 },
+  { k: 'brow', name: 'Chân mày', max: 100 },
+]
+const SCULPT_BANDS: { k: MakeupKey; name: string }[] = [
+  { k: 'contour', name: 'Tạo khối' },
+  { k: 'highlight', name: 'Bắt sáng' },
+]
+
 export function SkinPanel() {
   const face = useStore((s) => s.face)
   const smooth = useStore((s) => s.recipe.smooth)
   const white = useStore((s) => s.recipe.white)
   const makeup = useStore((s) => s.recipe.makeup)
+  const shade = useStore((s) => s.recipe.shade)
+  const beauty = useStore((s) => s.recipe.beauty)
   const shape = useStore((s) => s.recipe.shape)
+  const recipe = useStore((s) => s.recipe)
   const sample = useStore((s) => s.src?.sample)
   const brushOn = useStore((s) => s.skinBrush)
   const smoothSize = useStore((s) => s.smoothSize)
   const strokes = useStore((s) => s.recipe.smoothBrush.length)
   const ready = face.status === 'ready'
+  const look = BEAUTY_LOOKS.find((l) => l.id === beauty.id)
+  const makeupLook = currentMakeupLook(recipe)
+  const setMakeup = (k: MakeupKey) => (v: number) => live((r) => ({ ...r, makeup: { ...r.makeup, [k]: v } }))
   return (
     <>
-      <h2 className="group-title">Tự động</h2>
-      <button type="button" className="chip" disabled={!ready} onClick={() => change((r) => ({
-        ...r,
-        smooth: 24,
-        makeup: { lip: 10, blush: 28, shadow: 0 },
-      }))}>Làm đẹp nhẹ</button>
+      <h2 className="group-title">Làm đẹp một chạm</h2>
+      <div className="chips" role="group" aria-label="Kiểu làm đẹp">
+        <button type="button" className="chip" aria-pressed={!look} disabled={!ready} onClick={() => change((r) => applyBeauty(r, null, 0))}>Gốc</button>
+        {BEAUTY_LOOKS.map((l) => (
+          <button key={l.id} type="button" className="chip" title={l.hint} aria-pressed={look?.id === l.id} disabled={!ready}
+            onClick={() => change((r) => applyBeauty(r, l.id, r.beauty.id === l.id ? r.beauty.amt : BEAUTY_DEFAULT))}>{l.name}</button>
+        ))}
+      </div>
+      {look && (
+        <Band label={`Cường độ ${look.name}`} value={beauty.amt} min={0} max={100} origin={0} unit="%" disabled={!ready}
+          onLive={(v) => live((r) => applyBeauty(r, look.id, v))} onCommit={commit} />
+      )}
       {face.status === 'loading' && (
         <p className="note status"><span className="spin" />Đang tải mô hình và tìm khuôn mặt…</p>
       )}
@@ -237,17 +359,33 @@ export function SkinPanel() {
         <p className="note">Chưa thấy khuôn mặt. Bạn vẫn dùng được cọ.</p>
       )}
       {ready && !sample && face.count > 1 && <p className="note">Áp cho khuôn mặt lớn nhất.</p>}
+      <h3 className="group-title">Da</h3>
       <Band label="Mịn da" value={smooth} min={0} max={100} origin={0} unit="%" disabled={!ready}
         onLive={(v) => live((r) => ({ ...r, smooth: v }))} onCommit={commit} />
       <Band label="Trắng da" value={white} min={0} max={100} origin={0} unit="%" disabled={face.status === 'loading'}
         onLive={(v) => live((r) => ({ ...r, white: v }))} onCommit={commit} />
       <h3 className="group-title">Trang điểm</h3>
-      <Band label="Son môi" value={makeup.lip} min={0} max={MAX_LIP} origin={0} unit="%" disabled={!ready}
-        onLive={(v) => live((r) => ({ ...r, makeup: { ...r.makeup, lip: v } }))} onCommit={commit} />
-      <Band label="Má hồng" value={makeup.blush} min={0} max={100} origin={0} unit="%" disabled={!ready}
-        onLive={(v) => live((r) => ({ ...r, makeup: { ...r.makeup, blush: v } }))} onCommit={commit} />
-      <Band label="Phấn mắt" value={makeup.shadow} min={0} max={60} origin={0} unit="%" disabled={!ready}
-        onLive={(v) => live((r) => ({ ...r, makeup: { ...r.makeup, shadow: v } }))} onCommit={commit} />
+      <div className="chips" role="group" aria-label="Mẫu trang điểm">
+        {MAKEUP_LOOKS.map((l) => (
+          <button key={l.id} type="button" className="chip" aria-pressed={makeupLook === l.id} disabled={!ready}
+            onClick={() => change((r) => applyMakeupLook(r, l.id))}>{l.name}</button>
+        ))}
+      </div>
+      {MAKEUP_BANDS.map((b) => (
+        <div key={b.k} className="band-group">
+          <Band label={b.name} value={makeup[b.k]} min={0} max={b.max} origin={0} unit="%" disabled={!ready}
+            onLive={setMakeup(b.k)} onCommit={commit} />
+          {b.k === 'lip' && <Swatches label="Màu son" items={LIP_SHADES} value={shade.lip} disabled={!ready}
+            onPick={(id) => change((r) => ({ ...r, shade: { ...r.shade, lip: id }, makeup: { ...r.makeup, lip: r.makeup.lip || 14 } }))} />}
+          {b.k === 'blush' && <Swatches label="Màu má hồng" items={BLUSH_SHADES} value={shade.blush} disabled={!ready}
+            onPick={(id) => change((r) => ({ ...r, shade: { ...r.shade, blush: id }, makeup: { ...r.makeup, blush: r.makeup.blush || 28 } }))} />}
+        </div>
+      ))}
+      <h3 className="group-title">Tạo khối</h3>
+      {SCULPT_BANDS.map((b) => (
+        <Band key={b.k} label={b.name} value={makeup[b.k]} min={0} max={100} origin={0} unit="%" disabled={!ready}
+          onLive={setMakeup(b.k)} onCommit={commit} />
+      ))}
       <h3 className="group-title">Chỉnh nét mặt</h3>
       {SHAPES.map((sh) => (
         <Band key={sh.k} label={sh.name} value={shape[sh.k]} min={sh.k === 'faceSlim' ? 0 : -100} max={100}
@@ -315,7 +453,9 @@ export function HealPanel() {
       ) : (
         <>
           <p className="note">
-            Tô kín vật thể cần xoá. Lần đầu tải model khoảng 8 MB, các lần sau dùng bản đã lưu.
+            {useServer
+              ? 'Tô kín vật thể và bóng của nó. Vùng ảnh quanh chỗ tô được gửi lên máy chủ để AI xoá, không lưu lại.'
+              : 'Tô kín vật thể và bóng của nó. Lần đầu tải model khoảng 8 MB, các lần sau dùng bản đã lưu.'}
           </p>
           <Band label="Cỡ cọ" value={eraseSize} min={1} max={100} noReset disabled={processing} onLive={setEraseSize} onCommit={() => {}} />
           <div className="chips" role="group" aria-label="Vùng tô AI">

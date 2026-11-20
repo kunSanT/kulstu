@@ -3,12 +3,14 @@ import { describeHistory } from '../engine/history'
 import { freshRecipe, outputSize, type PresetId } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
 import { exportImage, type ExportFormat } from '../services/image'
-import { detectPlatform, isPhone } from '../services/save'
+import { exportSizes } from '../engine/exportSize'
+import { canvasPixelLimit, detectPlatform, isPhone } from '../services/save'
+import { isNativeApp } from '../services/native'
 import { listDrafts, type DraftSummary } from '../services/draft'
 import {
   boot, change, dismissToast, flushDraft, getState, jumpTo, openFile, openProject, openSample, redo, removeDraft, runExport, setTab, undo, useStore, type Tab,
 } from '../store'
-import { BodyPanel, ColorMatchPanel, ColorPanel, CropPanel, DetailPanel, HealPanel, PresetPanel, SkinPanel, SunlightPanel } from './Panels'
+import { BodyPanel, ColorMatchPanel, ColorPanel, CropPanel, DetailPanel, HealPanel, PresetPanel, SkinPanel, SunlightPanel, TemplatePanel } from './Panels'
 import { haptic } from './haptic'
 import { nextSheet, SHEET_SWIPE, type Sheet } from './sheet'
 import { Stage } from './Stage'
@@ -19,11 +21,11 @@ const GROUPS: { name: string; icon: string; tools: { id: Tab; name: string }[] }
   { name: 'Màu', icon: 'M12 3c2 4 6 7 6 12a6 6 0 0 1-12 0c0-5 4-8 6-12ZM9 16a3 3 0 0 0 3 3', tools: [{ id: 'color', name: 'Tinh chỉnh' }, { id: 'preset', name: 'Bộ màu' }, { id: 'colorMatch', name: 'Màu mẫu' }] },
   { name: 'Chân dung', icon: 'M8 14c1 2 3 3 4 3s3-1 4-3M8 10h.01M16 10h.01M12 21c-4 0-8-4-8-9s3-9 8-9 8 4 8 9-4 9-8 9Z', tools: [{ id: 'skin', name: 'Làm đẹp' }, { id: 'body', name: 'Dáng' }, { id: 'hair', name: 'Tóc' }] },
   { name: 'Sửa', icon: 'm4 14 9-9a2 2 0 0 1 3 0l3 3a2 2 0 0 1 0 3l-8 8H8l-4-4Zm5-5 7 7m-5 3h9', tools: [{ id: 'heal', name: 'Cọ & AI' }, { id: 'detail', name: 'Chi tiết' }] },
-  { name: 'Sáng tạo', icon: 'M12 3c0 5-4 9-9 9 5 0 9 4 9 9 0-5 4-9 9-9-5 0-9-4-9-9Z', tools: [{ id: 'create', name: 'Chữ & sticker' }, { id: 'sunlight', name: 'Nắng chiều' }] },
+  { name: 'Sáng tạo', icon: 'M12 3c0 5-4 9-9 9 5 0 9 4 9 9 0-5 4-9 9-9-5 0-9-4-9-9Z', tools: [{ id: 'template', name: 'Mẫu' }, { id: 'create', name: 'Chữ & sticker' }, { id: 'sunlight', name: 'Nắng chiều' }] },
 ]
 
 const PANELS = { crop: CropPanel, color: ColorPanel, preset: PresetPanel, skin: SkinPanel,
-  hair: HairPanel, heal: HealPanel, body: BodyPanel, background: BackgroundPanel, create: CreatePanel, detail: DetailPanel, sunlight: SunlightPanel, colorMatch: ColorMatchPanel }
+  hair: HairPanel, heal: HealPanel, body: BodyPanel, background: BackgroundPanel, create: CreatePanel, detail: DetailPanel, sunlight: SunlightPanel, colorMatch: ColorMatchPanel, template: TemplatePanel }
 
 const EDITOR_ROUTE = '#/editor'
 const HERO_IMAGE = `${import.meta.env.BASE_URL}kulstu-portrait.webp`
@@ -217,7 +219,7 @@ function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: bo
         <section className="welcome" aria-labelledby="home-title">
           <div className="welcome-body">
             <h1 id="home-title">Chân dung theo cách bạn thích.</h1>
-            <p className="lede">Lên màu, chỉnh nét và xóa vật thể ngay trên máy.</p>
+            <p className="lede">Lên màu, làm đẹp, xóa vật thể và xuất ảnh 4K.</p>
             <div className="welcome-actions">
               <button type="button" className="primary big" disabled={!ready || opening} onClick={canResume ? goToEditor : pickFile}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -229,7 +231,7 @@ function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: bo
                 {opening ? 'Đang mở…' : canResume ? 'Chọn ảnh khác' : 'Thử ảnh mẫu'}
               </button>
             </div>
-            <p className="home-privacy">Ảnh ở trên thiết bị của bạn.</p>
+            <p className="home-privacy">Ảnh được chỉnh ngay trên máy và không tải lên đâu cả, trừ khi bạn xoá vật thể bằng AI. <a href={`${import.meta.env.BASE_URL}privacy.html`} target={isNativeApp() ? undefined : "_blank"} rel="noopener">Quyền riêng tư</a></p>
           </div>
           <div className="home-photo">
             <figure className="welcome-demo" data-intro={previewReady && !adjustedSplit}
@@ -260,7 +262,7 @@ function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: bo
           {([{ group: GROUPS[1], tab: 'preset', name: 'Bộ màu', detail: 'Lên tông trong một chạm.' },
             { group: GROUPS[2], tab: 'skin', name: 'Chân dung', detail: 'Da, makeup và nét mặt.' },
             { group: GROUPS[3], tab: 'heal', name: 'Sửa ảnh', detail: 'Xóa mụn và vật thể AI.' },
-            { group: GROUPS[4], tab: 'create', name: 'Sáng tạo', detail: 'Thêm chữ và sticker.' }] as const).map(({ group, tab, name, detail }) => (
+            { group: GROUPS[4], tab: 'template', name: 'Mẫu ảnh', detail: 'Phong cách dựng sẵn, một chạm.' }] as const).map(({ group, tab, name, detail }) => (
             <button className="home-tool" type="button" key={tab} disabled={!ready || opening} onClick={() => void openTool(tab)}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={group.icon} /></svg>
               <span><strong>{name}</strong><small>{detail}</small></span>
@@ -525,14 +527,8 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
   const fmt = format ?? (transparent ? 'png' : 'jpeg')
   const [sizeId, setSizeId] = useState('full')
   const full = outputSize(geo, src.w, src.h)
-  const long = Math.max(full.w, full.h)
-  const sizes = [
-    { id: 'full', name: 'Đầy đủ', k: 1 },
-    { id: 'half', name: 'Một nửa', k: 0.5 },
-    ...(long > 1350 ? [{ id: 'web', name: 'Cạnh dài 1080', k: 1080 / long }] : []),
-  ]
+  const sizes = exportSizes(full.w, full.h, canvasPixelLimit())
   const size = sizes.find((s) => s.id === sizeId) ?? sizes[0]
-  const px = (k: number) => `${Math.max(1, Math.round(full.w * k))} × ${Math.max(1, Math.round(full.h * k))} px`
   const close = () => ref.current?.close()
   return (
     <dialog ref={ref} aria-labelledby="exportTitle" onClose={onClose} onClick={(e) => e.target === ref.current && !exporting && close()} onCancel={(e) => exporting && e.preventDefault()}>
@@ -552,10 +548,12 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
         {sizes.map((s) => (
           <label key={s.id}>
             <input type="radio" name="size" checked={size.id === s.id} onChange={() => setSizeId(s.id)} />
-            <span>{s.name}<small>{px(s.k)}</small></span>
+            <span>{s.name}<small>{s.w} × {s.h}{s.upscale ? ' · phóng to' : ''}</small></span>
           </label>
         ))}
       </fieldset>
+      {size.capped && <p className="note">iPhone này vẽ tối đa {Math.round(canvasPixelLimit() / 1e6)} triệu điểm ảnh mỗi ảnh nên ảnh được thu nhỏ còn {size.w} × {size.h}. Cập nhật iOS 18 để xuất lớn hơn.</p>}
+      {size.upscale && <p className="note">Ảnh gốc nhỏ hơn {size.name} nên sẽ được phóng to; chi tiết không nét thêm.</p>}
       {fmt === 'jpeg' && <label className="collage-files">
         Chất lượng JPEG {quality}%
         <input type="range" aria-label="Chất lượng JPEG" min={30} max={100} value={quality} disabled={exporting}

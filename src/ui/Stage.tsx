@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { applyErases, type Erase } from '../engine/erase'
+import { applyErases } from '../engine/erase'
 import { applySpots } from '../engine/heal'
 import { brushMask } from '../engine/smoothBrush'
 import { drawDecorations } from '../engine/decorations'
-import { drawRepairs, repairWindow } from '../services/repair'
-import { DILATE, FEATHER } from '../engine/inpaint'
+import { drawRepairs } from '../services/repair'
 import { applyPushes, fieldAt, makeField, type Field } from '../engine/liquify'
 import { displayToSrc, orientedSize, outputSize, warpPoint } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
@@ -59,15 +58,11 @@ const brushMode = () => {
 }
 const isBrushTab = () => !!brushMode()
 
-/** Bề rộng (px ảnh nguồn) mà AI lấp thêm quanh nét tô, theo đúng khung mà repairRegion sẽ dùng. */
-function fillGrow(src: { w: number; h: number; preview: { width: number; height: number } }, strokes: Erase[]) {
-  try {
-    const { factor } = repairWindow(src.preview.width, src.preview.height, strokes)
-    return (DILATE + FEATHER) / factor * (src.w / src.preview.width)
-  } catch {
-    return 0 // vùng tô quá rộng: repairRegion sẽ báo lỗi khi bấm xử lý
-  }
-}
+/**
+ * Mật độ điểm ảnh dùng để dựng ảnh. iPhone báo 3×, nhưng 2× đã nét bằng mắt thường
+ * mà số điểm ảnh phải vẽ chỉ bằng 44%: kéo thanh trượt mượt hơn, đỡ nóng máy.
+ */
+export const screenDensity = (ratio = typeof devicePixelRatio === 'number' ? devicePixelRatio : 1) => Math.min(2, Math.max(1, ratio || 1))
 
 export function Stage() {
   const src = useStore((s) => s.src)
@@ -98,6 +93,8 @@ export function Stage() {
   const paintRef = useRef<HTMLCanvasElement>(null)
   const loupeRef = useRef<HTMLCanvasElement>(null)
   const R = useRef<Renderer | null>(null)
+  // tăng mỗi khi phải dựng lại WebGL (iOS thu hồi context khi app chạy nền): canvas mới, nạp lại mọi texture
+  const [gl, setGl] = useState(0)
   const view = useRef({ z: 1, tx: 0, ty: 0, fitW: 0, fitH: 0 })
   const [zoom, setZoomLabel] = useState(1)
   const raf = useRef(0)
@@ -114,7 +111,7 @@ export function Stage() {
     // GPU tự thu nhỏ bằng mipmap nên ảnh nét hơn hẳn so với để trình duyệt co canvas
     const d = dimsRef.current
     const v = view.current
-    const k = Math.min(1, (v.fitW * v.z * devicePixelRatio) / d.w, 8192 / Math.max(d.w, d.h))
+    const k = Math.min(1, (v.fitW * v.z * screenDensity()) / d.w, 8192 / Math.max(d.w, d.h))
     const outW = Math.max(1, Math.round(d.w * k))
     const outH = Math.max(1, Math.round(d.h * k))
     const split = s.split && !s.hold && !crop ? s.splitX : undefined
@@ -146,12 +143,38 @@ export function Stage() {
   useEffect(() => {
     // không huỷ context khi effect chạy lại (StrictMode): canvas rời DOM thì trình duyệt tự thu hồi
     if (R.current) return
+    const canvas = canvasRef.current!
     try {
-      R.current = createRenderer(canvasRef.current!)
+      R.current = createRenderer(canvas)
     } catch {
       toast('Trình duyệt này chưa hỗ trợ WebGL2 nên chưa chỉnh được ảnh. Hãy dùng Chrome hoặc Safari bản mới.', { err: true, sticky: true })
+      return
     }
-  }, [])
+    // iOS hay thu hồi WebGL khi chuyển sang app khác. Dựng lại bằng canvas mới thay vì chờ trình duyệt trả lại,
+    // vì Safari không phải lúc nào cũng phát sự kiện restored.
+    let timer = 0
+    const rebuild = () => {
+      if (timer || !R.current?.lost) return
+      timer = window.setTimeout(() => {
+        timer = 0
+        if (document.visibilityState !== 'visible' || !R.current?.lost) return
+        R.current = null
+        setGl((n) => n + 1)
+      }, 300)
+    }
+    const lost = (event: Event) => {
+      event.preventDefault()
+      rebuild()
+    }
+    const visible = () => document.visibilityState === 'visible' && rebuild()
+    canvas.addEventListener('webglcontextlost', lost)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      canvas.removeEventListener('webglcontextlost', lost)
+      document.removeEventListener('visibilitychange', visible)
+      clearTimeout(timer)
+    }
+  }, [gl])
 
   // ảnh làm việc = preview + các điểm xoá mụn + các nét xoá vật thể; ảnh gốc giữ riêng để so sánh.
   // Khi chỉ thêm thao tác mới vào cuối, áp tiếp lên ảnh làm việc sẵn có thay vì dựng lại từ đầu.
@@ -202,32 +225,32 @@ export function Stage() {
       if (current) toast('Chưa mở được vùng đã sửa bằng AI.', { err: true })
     })
     return () => { current = false }
-  }, [src, spots, erases, repairs, draw])
+  }, [src, spots, erases, repairs, draw, gl])
 
   useEffect(() => {
     R.current?.setMask(mask)
     R.current?.setFeatures(features, bodyData)
     draw()
-  }, [mask, features, bodyData, src, draw])
+  }, [mask, features, bodyData, src, draw, gl])
 
   useEffect(() => {
     R.current?.setPersonMask(personMask)
     R.current?.setHair(hair)
     draw()
-  }, [personMask, hair, src, draw])
+  }, [personMask, hair, src, draw, gl])
 
   const smoothStrokes = recipe.smoothBrush
   useEffect(() => {
     if (!R.current || !src) return
     R.current.setBrushMask(smoothStrokes.length ? brushMask(src.w, src.h, smoothStrokes) : null)
     draw()
-  }, [src, smoothStrokes, draw])
+  }, [src, smoothStrokes, draw, gl])
   const blurStrokes = recipe.blurBrush
   useEffect(() => {
     if (!R.current || !src) return
     R.current.setBlurMask(blurStrokes.length ? brushMask(src.w, src.h, blurStrokes) : null)
     draw()
-  }, [src, blurStrokes, draw])
+  }, [src, blurStrokes, draw, gl])
 
   // trường kéo nắn: khi đang kéo chỉ áp thêm các bước mới
   const pushes = recipe.push
@@ -248,7 +271,7 @@ export function Stage() {
     fieldRef.current = f
     R.current.setField(f.field)
     draw()
-  }, [src, pushes, draw])
+  }, [src, pushes, draw, gl])
 
   useEffect(draw, [recipe, hold, split, splitX, cropMode, draw])
 
@@ -361,7 +384,7 @@ export function Stage() {
       if (!el.hidden && now - lastLoupe < 33) return
       lastLoupe = now
       renderRef.current()
-      const dpr = Math.min(3, devicePixelRatio || 1)
+      const dpr = screenDensity()
       const size = Math.round(LOUPE * dpr)
       if (el.width !== size) el.width = el.height = size
       const g = el.getContext('2d')!
@@ -656,28 +679,23 @@ export function Stage() {
     <section className={'stage' + (healMode ? ' heal' : '')} aria-label="Khung ảnh">
       <div className="viewport" ref={vpRef}>
         <div className="frame" ref={frameRef}>
-          <canvas ref={canvasRef} aria-label="Ảnh đang chỉnh" />
+          <canvas key={gl} ref={canvasRef} aria-label="Ảnh đang chỉnh" />
           <canvas className="paint" ref={decorationsRef} aria-hidden="true" hidden />
           <canvas className="paint" ref={paintRef} aria-hidden="true" />
           {tab === 'sunlight' && recipe.sunlight > 0 && !hold && !split && <SunlightHandles key={src?.id} />}
           {tab === 'create' && !hold && !split && <DecorationHandles key={src?.id} />}
           {selection && <svg className="repair-selection" viewBox={`0 0 ${selection.w} ${selection.h}`} aria-hidden="true">
-            {/* quầng nhạt: vùng AI thực sự lấp, rộng hơn nét tô để bắt cả viền mờ và bóng sát vật */}
-            {([['halo', fillGrow(src!, repairStrokes)], ['core', 0]] as const).map(([layer, grow]) => (
-              <g key={layer} className={'repair-' + layer}>
-                {repairStrokes.map((stroke, i) => {
-                  const points: string[] = []
-                  for (let j = 0; j < stroke.view.length; j += 2) {
-                    points.push(`${stroke.view[j] * selection.w},${stroke.view[j + 1] * selection.h}`)
-                  }
-                  const diameter = stroke.r * Math.max(src!.w, src!.h) * 2 + grow * 2
-                  return points.length === 1
-                    ? <circle key={i} cx={stroke.view[0] * selection.w} cy={stroke.view[1] * selection.h} r={diameter / 2} fill="currentColor" />
-                    : <polyline key={i} points={points.join(' ')} stroke="currentColor" strokeWidth={diameter} fill="none"
-                        strokeLinecap="round" strokeLinejoin="round" />
-                })}
-              </g>
-            ))}
+            {repairStrokes.map((stroke, i) => {
+              const points: string[] = []
+              for (let j = 0; j < stroke.view.length; j += 2) {
+                points.push(`${stroke.view[j] * selection.w},${stroke.view[j + 1] * selection.h}`)
+              }
+              const diameter = stroke.r * Math.max(src!.w, src!.h) * 2
+              return points.length === 1
+                ? <circle key={i} cx={stroke.view[0] * selection.w} cy={stroke.view[1] * selection.h} r={diameter / 2} fill="currentColor" />
+                : <polyline key={i} points={points.join(' ')} stroke="currentColor" strokeWidth={diameter} fill="none"
+                    strokeLinecap="round" strokeLinejoin="round" />
+            })}
           </svg>}
           {cropMode && <CropOverlay />}
           {showSplit && (

@@ -2,6 +2,8 @@
 // - iPhone/iPad: web không ghi thẳng vào app Ảnh được, nên mở bảng Chia sẻ (có mục "Lưu hình ảnh").
 // - Android: ảnh tải xuống tự hiện trong Thư viện/Google Photos (thư mục Download).
 
+import { nativeShareImage } from './native'
+
 export type Platform = 'ios' | 'android' | 'desktop'
 export type SaveResult = 'saved' | 'downloaded' | 'cancelled' | 'needs-tap'
 
@@ -22,6 +24,23 @@ export function detectPlatform(nav: Nav | undefined = typeof navigator === 'unde
 
 export const isPhone = (platform: Platform) => platform !== 'desktop'
 
+/** Phiên bản iOS từ chuỗi trình duyệt ("OS 17_5" → 17), cả trong app iPhone (WKWebView); không phải iOS → null. */
+export function iosVersion(ua = typeof navigator === 'undefined' ? '' : navigator.userAgent) {
+  // iPad báo là Mac: lấy số bản Safari (Version/17.5), trùng số bản iOS; không có thì coi như bản cũ
+  const m = /(?:iPhone|iPad|iPod)[^)]*? OS (\d+)[_.]/.exec(ua) ?? (/Macintosh/.test(ua) ? /Version\/(\d+)/.exec(ua) : null)
+  return m ? Number(m[1]) : null
+}
+
+/**
+ * Số điểm ảnh tối đa của một canvas mà trình duyệt vẽ được. Safari trên iOS dưới 18 dừng ở 4096×4096
+ * (16.777.216); iOS 18 nới lên 8192×8192. Vượt ngưỡng thì canvas trắng, ảnh xuất hỏng.
+ */
+export function canvasPixelLimit(ua?: string, platform: Platform = detectPlatform()) {
+  if (platform !== 'ios') return Infinity
+  const v = iosVersion(ua)
+  return v !== null && v >= 18 ? 8192 * 8192 : 4096 * 4096
+}
+
 export function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -40,8 +59,18 @@ export function downloadBlob(blob: Blob, fileName: string) {
  */
 export async function saveImage(blob: Blob, fileName: string, {
   platform = detectPlatform(), nav = typeof navigator === 'undefined' ? undefined : navigator as Nav,
-  download = downloadBlob, retry = false,
-}: { platform?: Platform; nav?: Nav; download?: (blob: Blob, fileName: string) => void; retry?: boolean } = {}): Promise<SaveResult> {
+  download = downloadBlob, retry = false, native = nativeShareImage,
+}: {
+  platform?: Platform; nav?: Nav; download?: (blob: Blob, fileName: string) => void; retry?: boolean
+  native?: (blob: Blob, fileName: string) => Promise<'saved' | 'cancelled' | null>
+} = {}): Promise<SaveResult> {
+  // trong app iPhone: bảng Chia sẻ gốc, mở được cả khi xuất ảnh lâu (không cần chạm lại như Safari)
+  try {
+    const result = await native(blob, fileName)
+    if (result) return result
+  } catch {
+    // plugin lỗi: thử cách của web bên dưới
+  }
   if (platform === 'ios' && nav?.share && typeof File === 'function') {
     const file = new File([blob], fileName, { type: blob.type || 'image/jpeg' })
     let shareable = false

@@ -7,11 +7,26 @@ import type { ColorMatch } from './colorMatch'
 
 export type Rect = { x: number; y: number; w: number; h: number }
 export type RatioId = 'free' | 'orig' | '1:1' | '4:5' | '9:16'
-export type PresetId = 'suong' | 'nang' | 'phim' | 'dao' | 'bac' | 'ho-phach' | 'chieu-mua' | 'hong-tra' | 'mo' | 'tung'
+export type PresetId = string
 export type AdjKey = 'b' | 'c' | 's' | 't' | 'shadows' | 'highlights' | 'sharp' | 'denoise' | 'vignette'
-export type MakeupKey = 'lip' | 'blush' | 'shadow'
+export type MakeupKey = 'lip' | 'blush' | 'shadow' | 'brow' | 'contour' | 'highlight'
+export const MAKEUP_KEYS: MakeupKey[] = ['lip', 'blush', 'shadow', 'brow', 'contour', 'highlight']
 export const MAX_LIP = 30
-export type Decoration = { id: string; kind: 'text' | 'sticker'; value: string; x: number; y: number; size: number; color: string; rotation?: number }
+export type Decoration = {
+  id: string
+  kind: 'text' | 'sticker'
+  value: string
+  x: number
+  y: number
+  size: number
+  color: string
+  rotation?: number
+  /** Kiểu chữ: viền đen (mặc định), chữ trơn, hay chữ có bóng mềm. */
+  style?: 'outline' | 'plain' | 'shadow'
+  font?: 'sans' | 'serif' | 'mono'
+  /** Lớp do mẫu ảnh thêm vào; đổi mẫu thì lớp này được thay. */
+  tpl?: boolean
+}
 export type RepairPatch = Rect & { png: string }
 export type Rot = 0 | 1 | 2 | 3
 /** Điểm xoá mụn: tâm (x, y) chuẩn hoá theo ảnh nguồn, r tính theo cạnh dài của ảnh. */
@@ -42,6 +57,8 @@ export type Features = {
   jaw: Spot
   chin: Spot
   makeupMask?: HTMLCanvasElement
+  /** Kênh đỏ: vùng tạo khối tối, xanh lá: vùng bắt sáng, xanh lam: chân mày. */
+  sculptMask?: HTMLCanvasElement
   ux: number
   uy: number
 }
@@ -64,6 +81,12 @@ export type Recipe = {
   sunRay: { source: { x: number; y: number }; target: { x: number; y: number } }
   colorMatch: ColorMatch | null
   makeup: Record<MakeupKey, number>
+  /** Màu son và màu má hồng. */
+  shade: { lip: string; blush: string }
+  /** Kiểu làm đẹp một chạm đang áp và cường độ (chỉ để hiện trên giao diện). */
+  beauty: { id: string | null; amt: number }
+  /** Mẫu ảnh đang áp. */
+  template: string | null
   background: 'original' | 'transparent' | `#${string}`
   hair: { smooth: number }
   repairs: RepairPatch[]
@@ -96,7 +119,10 @@ export const freshRecipe = (): Recipe => ({
   sunlight: 0,
   sunRay: { source: { x: .1, y: .08 }, target: { x: .7, y: .67 } },
   colorMatch: null,
-  makeup: { lip: 0, blush: 0, shadow: 0 },
+  makeup: { lip: 0, blush: 0, shadow: 0, brow: 0, contour: 0, highlight: 0 },
+  shade: { lip: 'hong', blush: 'hong' },
+  beauty: { id: null, amt: 80 },
+  template: null,
   background: 'original',
   hair: { smooth: 0 },
   repairs: [],
@@ -125,29 +151,67 @@ export const PARAMS: { k: AdjKey; name: string; short: string; temp?: boolean; a
   { k: 'vignette', name: 'Tối viền', short: 'Tối viền', amount: true, detail: true },
 ]
 
+export type PresetGroup = 'portrait' | 'film' | 'asia' | 'scene' | 'mono'
+export const PRESET_GROUPS: { id: PresetGroup; name: string }[] = [
+  { id: 'portrait', name: 'Chân dung' },
+  { id: 'film', name: 'Phim' },
+  { id: 'asia', name: 'Hàn – Nhật' },
+  { id: 'scene', name: 'Phong cảnh' },
+  { id: 'mono', name: 'Đen trắng' },
+]
+
+type V3 = [number, number, number]
 export type Preset = {
   id: PresetId
   name: string
   hint: string
+  group: PresetGroup
   b: number
   c: number
   s: number
   t: number
-  tint: [number, number, number]
+  tint: V3
   fade: number
+  /** Tô màu riêng cho vùng tối và vùng sáng (split toning). */
+  sh?: V3
+  hi?: V3
 }
 
+const P = (group: PresetGroup, id: string, name: string, hint: string, b: number, c: number, s: number, t: number, tint: V3, fade: number, sh?: V3, hi?: V3): Preset =>
+  ({ id, name, hint, group, b, c, s, t, tint, fade, sh, hi })
+
 export const PRESETS: Preset[] = [
-  { id: 'suong', name: 'Sương', hint: 'Sáng, mát, trong', b: 0.2, c: 0.05, s: -0.08, t: -0.24, tint: [0, 0.005, 0.012], fade: 0.01 },
-  { id: 'nang', name: 'Nắng', hint: 'Ấm, dịu', b: 0.14, c: -0.06, s: 0.08, t: 0.34, tint: [0.008, 0, -0.004], fade: 0.03 },
-  { id: 'phim', name: 'Phim', hint: 'Nhạt màu, mềm', b: 0.02, c: -0.22, s: -0.28, t: 0.14, tint: [0, 0.018, -0.022], fade: 0.09 },
-  { id: 'dao', name: 'Đào', hint: 'Da hồng hào', b: 0.1, c: 0.02, s: 0.1, t: 0.04, tint: [0.042, -0.01, 0.022], fade: 0.02 },
-  { id: 'bac', name: 'Bạc', hint: 'Đen trắng, tương phản rõ', b: 0, c: 0.28, s: -1, t: 0, tint: [0, 0, 0], fade: 0 },
-  { id: 'ho-phach', name: 'Hổ phách', hint: 'Vàng mật ong', b: 0.04, c: 0.18, s: -0.08, t: 0.5, tint: [0.025, 0.008, -0.018], fade: 0.02 },
-  { id: 'chieu-mua', name: 'Chiều mưa', hint: 'Xanh lam, trầm', b: -0.13, c: 0.16, s: -0.32, t: -0.32, tint: [-0.016, 0.012, 0.028], fade: 0.04 },
-  { id: 'hong-tra', name: 'Hồng trà', hint: 'Hồng nâu, dịu', b: 0.07, c: -0.1, s: -0.12, t: 0.15, tint: [0.045, -0.02, 0.008], fade: 0.05 },
-  { id: 'mo', name: 'Mơ', hint: 'Sáng mềm, màu nhạt', b: 0.25, c: -0.24, s: -0.2, t: 0.08, tint: [0.019, 0.012, 0.01], fade: 0.11 },
-  { id: 'tung', name: 'Tùng', hint: 'Xanh rêu, bóng sâu', b: -0.08, c: 0.24, s: -0.27, t: 0.1, tint: [-0.018, 0.035, -0.024], fade: 0.02 },
+  P('portrait', 'suong', 'Sương', 'Sáng, mát, trong', 0.2, 0.05, -0.08, -0.24, [0, 0.005, 0.012], 0.01),
+  P('portrait', 'nang', 'Nắng', 'Ấm, dịu', 0.14, -0.06, 0.08, 0.34, [0.008, 0, -0.004], 0.03),
+  P('portrait', 'dao', 'Đào', 'Da hồng hào', 0.1, 0.02, 0.1, 0.04, [0.042, -0.01, 0.022], 0.02),
+  P('portrait', 'hong-tra', 'Hồng trà', 'Hồng nâu, dịu', 0.07, -0.1, -0.12, 0.15, [0.045, -0.02, 0.008], 0.05),
+  P('portrait', 'mo', 'Mơ', 'Sáng mềm, màu nhạt', 0.25, -0.24, -0.2, 0.08, [0.019, 0.012, 0.01], 0.11),
+  P('portrait', 'sua', 'Sữa', 'Trắng sữa, mềm', 0.18, -0.12, -0.1, 0.02, [0.01, 0.01, 0.012], 0.06),
+  P('portrait', 'kem', 'Kem', 'Vàng kem, ấm nhẹ', 0.12, -0.08, -0.05, 0.16, [0.015, 0.008, -0.005], 0.05),
+  P('portrait', 'hong-phan', 'Hồng phấn', 'Hồng nhẹ, trong', 0.12, -0.04, 0.02, 0.02, [0.035, -0.008, 0.03], 0.04),
+  P('portrait', 'trong', 'Trong veo', 'Sáng, rõ, hơi mát', 0.1, 0.1, 0.06, -0.1, [0, 0.004, 0.01], 0),
+  P('film', 'phim', 'Phim', 'Nhạt màu, mềm', 0.02, -0.22, -0.28, 0.14, [0, 0.018, -0.022], 0.09),
+  P('film', 'ho-phach', 'Hổ phách', 'Vàng mật ong', 0.04, 0.18, -0.08, 0.5, [0.025, 0.008, -0.018], 0.02),
+  P('film', 'vang-phim', 'Vàng phim', 'Ấm, bóng hơi lam', 0.04, 0.12, 0.05, 0.28, [0.015, 0.01, -0.03], 0.05, [-0.01, 0, 0.025], [0.03, 0.015, -0.02]),
+  P('film', 'xanh-phim', 'Xanh phim', 'Xanh lục, trầm dịu', 0.02, 0.08, -0.06, -0.08, [-0.01, 0.02, 0], 0.06, [-0.015, 0.02, 0.02], [0.02, 0.01, -0.01]),
+  P('film', 'phim-cu', 'Phim cũ', 'Bạc màu, ngả vàng', 0.02, -0.18, -0.35, 0.25, [0.02, 0.01, -0.02], 0.14),
+  P('film', 'hoang-hon', 'Hoàng hôn', 'Cam rực, bóng tím', 0.02, 0.14, 0.12, 0.4, [0.03, -0.005, -0.02], 0.03, [0, -0.01, 0.03], [0.04, 0.01, -0.03]),
+  P('asia', 'han', 'Hàn Quốc', 'Sáng, hồng nhạt', 0.16, -0.06, -0.06, -0.04, [0.012, 0.004, 0.016], 0.05),
+  P('asia', 'nhat', 'Nhật', 'Nhạt, mát, xanh nhẹ', 0.14, -0.14, -0.18, -0.06, [-0.005, 0.012, 0.012], 0.08, [0, 0.01, 0.02]),
+  P('asia', 'anh-dao', 'Anh đào', 'Hồng tươi', 0.14, -0.04, 0.06, 0.02, [0.03, -0.012, 0.02], 0.04),
+  P('asia', 'tra-xanh', 'Trà xanh', 'Xanh lá dịu', 0.06, -0.04, -0.12, 0.02, [-0.006, 0.022, -0.01], 0.06),
+  P('asia', 'dong', 'Mùa đông', 'Lạnh, nhạt màu', 0.1, 0.04, -0.25, -0.35, [-0.01, 0.006, 0.025], 0.05),
+  P('scene', 'chieu-mua', 'Chiều mưa', 'Xanh lam, trầm', -0.13, 0.16, -0.32, -0.32, [-0.016, 0.012, 0.028], 0.04),
+  P('scene', 'tung', 'Tùng', 'Xanh rêu, bóng sâu', -0.08, 0.24, -0.27, 0.1, [-0.018, 0.035, -0.024], 0.02),
+  P('scene', 'bien', 'Biển', 'Xanh trong, rực', 0.06, 0.14, 0.18, -0.18, [-0.01, 0.01, 0.02], 0, [-0.02, 0, 0.02], [0.01, 0.01, -0.01]),
+  P('scene', 'rung', 'Rừng', 'Xanh lá đậm', -0.02, 0.16, 0.1, 0.06, [-0.01, 0.025, -0.015], 0),
+  P('scene', 'thanh-pho', 'Thành phố', 'Bóng xanh, sáng cam', 0, 0.2, 0.05, 0.05, [0, 0, 0], 0.02, [-0.03, 0.01, 0.035], [0.035, 0.012, -0.025]),
+  P('scene', 'dem', 'Đêm', 'Lam tím, tương phản', -0.1, 0.2, -0.1, -0.3, [-0.01, 0, 0.03], 0.03, [-0.01, 0, 0.03], [0.02, -0.01, 0.03]),
+  P('scene', 'sa-mac', 'Sa mạc', 'Cam đất, khô', 0.04, 0.12, -0.05, 0.45, [0.03, 0.01, -0.03], 0.04),
+  P('mono', 'bac', 'Bạc', 'Đen trắng, tương phản rõ', 0, 0.28, -1, 0, [0, 0, 0], 0),
+  P('mono', 'than-chi', 'Than chì', 'Đen sâu, gắt', -0.06, 0.4, -1, 0, [0, 0, 0], 0),
+  P('mono', 'xam-mem', 'Xám mềm', 'Đen trắng, dịu', 0.08, -0.2, -1, 0, [0, 0, 0], 0.1),
+  P('mono', 'nau-co', 'Nâu cổ', 'Ảnh nâu xưa', 0.02, 0.08, -1, 0.3, [0.015, 0.005, -0.01], 0.06),
 ]
 
 export const RATIOS: { id: RatioId; name: string; r: number | null }[] = [
@@ -227,7 +291,16 @@ export function isRecipe(x: unknown): x is Recipe {
 /** Bổ sung các trường mới cho công thức lưu từ bản cũ hơn. */
 export function normalizeRecipe(r: Recipe): Recipe {
   const f = freshRecipe()
-  return { ...f, ...r, adj: { ...f.adj, ...r.adj }, makeup: { ...f.makeup, ...r.makeup, lip: Math.min(MAX_LIP, Math.max(0, r.makeup?.lip ?? 0)) }, shape: { ...f.shape, ...r.shape }, hair: { smooth: r.hair?.smooth ?? 0 }, body: { ...f.body, ...r.body }, push: Array.isArray(r.push) ? r.push : [], erase: Array.isArray(r.erase) ? r.erase : [], smoothBrush: Array.isArray(r.smoothBrush) ? r.smoothBrush : [], decorations: Array.isArray(r.decorations) ? r.decorations : [], repairs: Array.isArray(r.repairs) ? r.repairs : [] }
+  const preset = r.preset && PRESETS.some((p) => p.id === r.preset.id) ? r.preset : { ...f.preset, amt: r.preset?.amt ?? f.preset.amt }
+  return {
+    ...f, ...r, preset, adj: { ...f.adj, ...r.adj },
+    makeup: { ...f.makeup, ...r.makeup, lip: Math.min(MAX_LIP, Math.max(0, r.makeup?.lip ?? 0)) },
+    shade: { ...f.shade, ...r.shade }, beauty: { ...f.beauty, ...r.beauty }, template: r.template ?? null,
+    shape: { ...f.shape, ...r.shape }, hair: { smooth: r.hair?.smooth ?? 0 }, body: { ...f.body, ...r.body },
+    push: Array.isArray(r.push) ? r.push : [], erase: Array.isArray(r.erase) ? r.erase : [],
+    smoothBrush: Array.isArray(r.smoothBrush) ? r.smoothBrush : [], decorations: Array.isArray(r.decorations) ? r.decorations : [],
+    repairs: Array.isArray(r.repairs) ? r.repairs : [],
+  }
 }
 
 export const requiresFace = (r: Recipe) => r.smooth > 0 || Object.values(r.makeup).some((value) => value > 0) ||

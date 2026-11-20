@@ -6,11 +6,14 @@ Web app chỉnh ảnh chân dung ngay trong trình duyệt, ưu tiên điện th
 
 ## Tính năng
 
-- Nhập ảnh JPEG, PNG, WebP (HEIC/HEIF nếu trình duyệt hỗ trợ), xuất JPEG hoặc PNG
+- Nhập ảnh JPEG, PNG, WebP (HEIC/HEIF nếu trình duyệt hỗ trợ), xuất JPEG hoặc PNG cỡ gốc, 4K, 1080p, 720p
 - Cắt theo tỷ lệ 1:1, 4:5, 9:16 hoặc tự do; xoay, lật
-- Chỉnh sáng, tương phản, bão hòa, nhiệt độ màu; preset màu có cường độ
+- Chỉnh sáng, tương phản, bão hòa, nhiệt độ màu; 31 bộ màu chia 5 nhóm (Chân dung, Phim, Hàn – Nhật, Phong cảnh, Đen trắng) có cường độ
+- **Mẫu ảnh**: 10 phong cách trọn gói (màu, nắng, xoá phông, làm đẹp, trang điểm) áp trong một chạm
+- **Làm đẹp một chạm** (Tự nhiên, Tươi tắn, Thanh tú, Nam) có thanh cường độ
+- Trang điểm: son (6 màu), má hồng (4 màu), phấn mắt, chân mày, tạo khối và bắt sáng; 7 mẫu trang điểm dựng sẵn
 - Làm mịn da, xoá mụn, kéo nắn (liquify), chỉnh dáng người
-- Xoá vật thể bằng AI (MI-GAN, chạy bằng ONNX Runtime Web ngay trên máy người dùng, ~3 giây mỗi lần, model 7,7 MB)
+- Xoá vật thể bằng AI: mặc định AI trên máy chủ (Cloudflare Workers AI, Stable Diffusion Inpainting); máy chủ lỗi thì dùng AI trên máy (MI-GAN, ONNX Runtime Web, model 7,7 MB)
 - Ghép 2–9 ảnh: lưới, ngang, dọc hoặc một ảnh lớn; khung 1:1, 4:5, 9:16; chỉnh khoảng cách và bo góc; đổi chỗ, xoá ảnh, kéo vạch để đổi độ rộng, cân màu theo một ảnh
 - So sánh trước/sau, hoàn tác/làm lại 20 bước, tự lưu bản nháp vào IndexedDB
 - Lưu ảnh: máy tính tải tệp xuống; điện thoại có nút **Lưu vào thư viện ảnh** (iPhone/iPad mở bảng Chia sẻ → Lưu hình ảnh, Android lưu vào Thư viện)
@@ -56,6 +59,10 @@ Sau khi model lấp, app ghép phần lấp vào ảnh sao cho khó nhận ra (`
 
 `public/_headers` bật COOP/COEP để trình duyệt hỗ trợ (Chrome, Edge, Firefox) chạy model nhiều luồng; Safari tự chạy một luồng.
 
+### Xoá vật thể trên máy chủ
+
+`worker/index.ts` là Worker phục vụ web tĩnh và API `POST /api/erase`: nhận khung PNG 512×512 quanh chỗ tô cùng mặt nạ, gọi `@cf/runwayml/stable-diffusion-v1-5-inpainting` qua binding `AI` (khai báo trong `wrangler.jsonc`), trả PNG đã lấp; không lưu ảnh. App gửi khung lên máy chủ trước, máy chủ lỗi/hết lượt/quá 45 giây thì dùng AI trên máy. Đặt `VITE_ERASE_ENGINE=device` để chỉ dùng AI trên máy. Khi chạy `npm run dev` không có Worker nên luôn dùng AI trên máy.
+
 ## Kiểm thử
 
 Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm gói. `test/setup.mjs` cho Node chạy thẳng mã nguồn TypeScript; `test/dom.ts` là canvas giả để kiểm tra pixel.
@@ -64,10 +71,15 @@ Test dùng `node:test` có sẵn trong Node ≥ 22.18, không cần cài thêm g
 | --- | --- |
 | `test/collage.test.ts` | Bố cục (cả khung không vuông và ảnh lớn), khoảng cách, bo góc, độ rộng từng ảnh, tay kéo, đổi chỗ bằng phím, cân màu |
 | `test/history.test.ts` | Đặt tên từng bước trong lịch sử chỉnh sửa |
+| `test/looks.test.ts` | Kho bộ màu, làm đẹp một chạm, mẫu trang điểm, đổi/gỡ mẫu ảnh gỡ sạch phần của mẫu cũ, vị trí vùng tạo khối (cả khi mặt nghiêng), nháp cũ |
+| `test/lips.test.ts` | Vùng son bám màu môi thật khi điểm mốc lệch, bỏ lòng miệng và răng, môi nhạt thì giữ viền điểm mốc |
+| `test/ios.test.ts` | Phiên bản iOS và giới hạn canvas, nhận biết app gốc, lưu ảnh và rung qua plugin, máy chủ cho phép app iPhone gọi API |
+| `test/exportSize.test.ts` | Kích thước xuất 4K/1080p/720p theo cạnh ngắn, đánh dấu phóng to, 4K không vượt giới hạn canvas của iPhone |
 | `test/sheet.test.ts` | Nấc của bảng chỉnh khi vuốt trên điện thoại |
 | `test/repair.test.ts` | Nguồn model, khung cắt quanh vùng tô, tiến độ và giới hạn thời gian, thông báo lỗi, mảng vá đúng vị trí |
 | `test/modelLoader.test.ts` | Tải model: máy chủ trả HTML, 404, mất mạng, tải thiếu, sai SHA-256, cache |
 | `test/inpaint.test.ts` | Chuyển dữ liệu ảnh ↔ model; ghép phần lấp: nới mặt nạ, hoà mép, cân màu, hạt nhiễu |
+| `test/serverRepair.test.ts` | Gọi AI máy chủ: mặt nạ, lỗi 404/429/mất mạng/quá giờ để quay về AI trên máy |
 | `test/save.test.ts` | Nhận diện iPhone/iPad/Android/máy tính, lưu vào thư viện ảnh, các trường hợp bảng chia sẻ bị huỷ hoặc bị chặn |
 | `test/image.test.ts` | Mở ảnh trên trình duyệt cũ (Chrome < 112, Safari cũ), ảnh hỏng, HEIC |
 | `test/model/inpaint.test.ts` | Chạy model thật: đúng tệp, lấp đúng màu, đo độ lệch so với nền thật |
@@ -79,6 +91,15 @@ Cloudflare Workers (đang dùng) hoặc Pages đều được: build command `np
 ### Tải thủ công lên Cloudflare Pages
 
 Chạy `npm run build:pages`, rồi vào **Workers & Pages → Create → Pages → Direct Upload** và tải thư mục `dist-pages`. Địa chỉ beta có dạng `<tên-dự-án>.pages.dev`. Ảnh và bản nháp vẫn lưu trên trình duyệt của người dùng.
+
+## App iPhone (App Store)
+
+Bản web được bọc thành app iPhone bằng Capacitor 8; build, ký và đẩy lên TestFlight chạy trên máy Mac của GitHub Actions,
+không cần Mac riêng. Hướng dẫn từng bước (tài khoản Apple, khoá API, nộp duyệt): [docs/ios.md](docs/ios.md).
+
+- Tối ưu cho iPhone: dựng ảnh tối đa 2× mật độ điểm ảnh, tự dựng lại WebGL khi iOS thu hồi lúc chuyển app, lưu nháp
+  ngay khi rời app, giới hạn cỡ ảnh xuất theo giới hạn canvas của từng bản iOS (16,7 triệu điểm ảnh trước iOS 18)
+- Trong app: lưu ảnh qua bảng Chia sẻ gốc, rung Taptic, gọi API xoá vật thể bằng địa chỉ đầy đủ (worker cho phép CORS từ app)
 
 ## Cấu trúc
 

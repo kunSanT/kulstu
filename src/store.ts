@@ -1,20 +1,20 @@
 import { useSyncExternalStore } from 'react'
 import { applyErases, MAX_ERASES, type Erase } from './engine/erase'
 import { applySpots } from './engine/heal'
-import { drawRepairs, preloadRepair, RepairError, repairRegion } from './services/repair'
+import { drawRepairs, preloadRepair, RepairError, repairRegion, useServer } from './services/repair'
 import { detectPlatform, saveImage, savedMessage, type SaveResult } from './services/save'
 import type { Push } from './engine/liquify'
 import { freshRecipe, MAX_PUSHES, MAX_SPOTS, requiresFace, usesBody, usesFace, usesHair, usesPersonMask, type AdjKey, type Body, type Features, type Recipe, type Spot } from './engine/recipe'
 import { detectBody } from './services/pose'
 import { segmentImage, type Segment, type SegmentKind } from './services/segment'
 import { deleteDraft, loadDraft, saveDraft, selectDraft, type Draft } from './services/draft'
-import { detectFace, ellipseMask, makeupMask } from './services/face'
+import { browArc, detectFace, ellipseMask, makeupMask, sculptMask } from './services/face'
 import {
   decodeFile, drawSample, exportImage, ImportError, makeSource, releaseSource, SAMPLE,
   type ExportFormat, type Source,
 } from './services/image'
 
-export type Tab = 'crop' | 'color' | 'preset' | 'skin' | 'heal' | 'body' | 'background' | 'create' | 'hair' | 'detail' | 'sunlight' | 'colorMatch'
+export type Tab = 'crop' | 'color' | 'preset' | 'skin' | 'heal' | 'body' | 'background' | 'create' | 'hair' | 'detail' | 'sunlight' | 'colorMatch' | 'template'
 type SegmentState = { status: 'idle' | 'loading' | 'ready' | 'none' | 'error'; result: Segment | null }
 type RepairStroke = Erase & { view: number[] }
 const emptySegment: SegmentState = { status: 'idle', result: null }
@@ -200,7 +200,8 @@ export function setHealTool(healTool: State['healTool']) {
 
 /** Tải sẵn model khi chọn công cụ xoá vật thể, để lúc tô xong bấm xử lý là chạy ngay. */
 async function warmRepair() {
-  if (state.repairReady || state.repairing) return
+  // AI máy chủ xử lý chính: không tải sẵn model trên máy (đỡ ~8 MB dữ liệu di động); chỉ tải khi máy chủ lỗi
+  if (useServer || state.repairReady || state.repairing) return
   const progress = (p: { phase: string; loaded?: number; total?: number }) => {
     if (state.repairing) return // đang xử lý thật: để runRepair báo tiến độ
     set({ repairProgress: p.phase === 'download' && p.total ? Math.min(100, Math.round((p.loaded ?? 0) / p.total * 100)) : null })
@@ -309,6 +310,11 @@ let booted = false
 export async function boot() {
   if (booted) return
   booted = true
+  // iOS có thể đóng app/tab chạy nền mà không báo: lưu nháp ngay khi người dùng rời đi, không đợi hẹn giờ
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flushDraft())
+    window.addEventListener('pagehide', flushDraft)
+  }
   // không để màn hình mở đầu phải chờ nếu IndexedDB treo hoặc bị chặn
   const d = await Promise.race([loadDraft(), new Promise<null>((r) => setTimeout(() => r(null), 2500))])
   if (d && !state.src) {
@@ -398,7 +404,14 @@ export async function ensureFace(retry = false) {
       g.ellipse(0.5, 860 / 1500, 58 / 1200, 20 / 1500, 0, 0, 2 * Math.PI)
       g.fill()
     }, [SAMPLE.features.eyeL, SAMPLE.features.eyeR].map((eye) => ({ x: eye.x, y: eye.y - .018, r: eye.r * .44 })))
-    set({ face: { status: 'ready', count: 1, mask: ellipseMask(src.w, src.h, f.cx, f.cy, f.rx, f.ry), features: { ...SAMPLE.features, makeupMask: sampleMakeup } } })
+    const { eyeL, eyeR, mouth } = SAMPLE.features
+    const sampleSculpt = sculptMask(src.w, src.h, {
+      eyeL, eyeR, mouth,
+      edgeL: { x: f.cx - f.rx, y: eyeL.y + .02 }, edgeR: { x: f.cx + f.rx, y: eyeR.y + .02 },
+      brows: [browArc(eyeL, .05, .045, false), browArc(eyeR, .05, .045, true)],
+      oval: Array.from({ length: 48 }, (_, i) => ({ x: f.cx + Math.cos(i * Math.PI / 24) * f.rx, y: f.cy + Math.sin(i * Math.PI / 24) * f.ry })),
+    })
+    set({ face: { status: 'ready', count: 1, mask: ellipseMask(src.w, src.h, f.cx, f.cy, f.rx, f.ry), features: { ...SAMPLE.features, makeupMask: sampleMakeup, sculptMask: sampleSculpt } } })
     return
   }
   set({ face: { status: 'loading', count: 0, mask: null, features: null } })

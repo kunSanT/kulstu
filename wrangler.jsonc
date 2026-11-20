@@ -5,11 +5,17 @@
   "observability": {
     "enabled": true
   },
-  // Web tĩnh: chỉ phục vụ thư mục build, không có mã Worker.
-  // Không bật "single-page-application": app dùng địa chỉ dạng #/, nên tệp thiếu
-  // trả 404 thật thay vì index.html (từng khiến model AI tải nhầm trang HTML).
+  // Worker phục vụ web tĩnh (dist/) và API /api/erase (xoá vật thể bằng AI trên máy chủ, xem worker/index.ts).
+  "main": "worker/index.ts",
+  // Tệp tĩnh được phục vụ trước, không qua Worker. Không bật "single-page-application": app dùng địa chỉ dạng #/,
+  // nên tệp thiếu trả 404 thật thay vì index.html (từng khiến model AI tải nhầm trang HTML).
   "assets": {
-    "directory": "./dist"
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  // Workers AI: model Stable Diffusion Inpainting dùng cho /api/erase
+  "ai": {
+    "binding": "AI"
   },
   // Cần cho bản xem trước của pull request (npx wrangler preview).
   "previews": {}

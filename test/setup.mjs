@@ -27,5 +27,5 @@ registerHooks({
   },
 })
 
-globalThis.__VITE_ENV__ = { DEV: false, PROD: true, MODE: 'production', BASE_URL: '/' }
+globalThis.__VITE_ENV__ = { DEV: false, PROD: true, MODE: 'production', BASE_URL: '/', VITE_ERASE_ENGINE: 'device' }
 await import('./dom.ts')
