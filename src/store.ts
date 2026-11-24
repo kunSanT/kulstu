@@ -4,15 +4,27 @@ import { applySpots } from './engine/heal'
 import { drawRepairs, preloadRepair, RepairError, repairRegion, useServer } from './services/repair'
 import { detectPlatform, saveImage, savedMessage, type SaveResult } from './services/save'
 import type { Push } from './engine/liquify'
+import { MAX_LOCAL, type LocalStroke, type PaintKind } from './engine/localBrush'
 import { freshRecipe, MAX_PUSHES, MAX_SPOTS, requiresFace, usesBody, usesFace, usesHair, usesPersonMask, type AdjKey, type Body, type Features, type Recipe, type Spot } from './engine/recipe'
 import { detectBody } from './services/pose'
 import { segmentImage, type Segment, type SegmentKind } from './services/segment'
 import { deleteDraft, loadDraft, saveDraft, selectDraft, type Draft } from './services/draft'
 import { browArc, detectFace, ellipseMask, makeupMask, sculptMask } from './services/face'
 import {
-  decodeFile, drawSample, exportImage, ImportError, makeSource, releaseSource, SAMPLE,
+  decodeFile, drawSample, exportImage, ExportFormatError, ImportError, makeSource, releaseSource, SAMPLE,
   type ExportFormat, type Source,
 } from './services/image'
+
+/** Làm đẹp và Dáng có hai cách chỉnh. Tự động: kéo thanh ở bảng bên phải, máy tự tìm mặt/dáng để áp. Thủ công: dùng cọ tô lên ảnh. */
+export type EditMode = 'auto' | 'manual'
+const MODE_KEY = 'kulstu.mode.v1'
+function savedMode(): EditMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'manual' ? 'manual' : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
 
 export type Tab = 'crop' | 'color' | 'preset' | 'skin' | 'heal' | 'body' | 'background' | 'create' | 'hair' | 'detail' | 'sunlight' | 'colorMatch' | 'template'
 type SegmentState = { status: 'idle' | 'loading' | 'ready' | 'none' | 'error'; result: Segment | null }
@@ -28,7 +40,7 @@ export type FaceState = {
 }
 export type DraftStatus = 'none' | 'saved' | 'failed'
 
-export const HISTORY_STEPS = 20
+export const HISTORY_STEPS = 100
 
 type State = {
   booting: boolean
@@ -37,14 +49,20 @@ type State = {
   hist: Recipe[]
   hi: number
   tab: Tab
+  /** Cách chỉnh Làm đẹp/Dáng: kéo thanh (tự động) hay dùng cọ (thủ công). */
+  mode: EditMode
   selectedDecoration: string | null
   param: AdjKey
-  /** Cỡ cọ xoá mụn, 1–100. */
-  brush: number
-  /** Cọ làm mịn đang bật trong tab Làm đẹp: kéo trên ảnh là tô mịn. */
-  skinBrush: boolean
-  /** Cỡ cọ làm mịn, 1–100. */
-  smoothSize: number
+  /** Cỡ cọ chung cho mọi loại cọ, 1–100 (đổi nhanh bằng phím [ và ]). */
+  brushSize: number
+  /** Đang dùng tẩy: nét tô xoá bớt vùng đã tô của cọ đang chọn. */
+  paintErase: boolean
+  /** Tô màu vùng đã tô của cọ đang chọn lên ảnh. */
+  showMask: boolean
+  /** Cọ đang chọn ở chế độ Thủ công (Làm đẹp, Tóc, Màu, Chi tiết, Nền). */
+  paintTool: PaintKind
+  /** Độ mạnh của cọ chỉnh vùng, 5–100. */
+  paintStrength: number
   /** Công cụ đang chọn trong tab Xoá. */
   healTool: 'spot' | 'object' | 'blur'
   repairStrokes: RepairStroke[]
@@ -53,10 +71,6 @@ type State = {
   repairProgress: number | 'running' | null
   /** Model xoá vật thể đã tải sẵn và nạp xong (sau khi chọn công cụ). */
   repairReady: boolean
-  /** Cỡ cọ xoá vật thể, 1–100. */
-  eraseSize: number
-  /** Cỡ cọ kéo nắn, 1–100. */
-  pushSize: number
   body: BodyState
   hold: boolean
   split: boolean
@@ -78,18 +92,19 @@ let state: State = {
   hist: [],
   hi: -1,
   tab: 'color',
+  mode: savedMode(),
   selectedDecoration: null,
   param: 'b',
-  brush: 35,
-  skinBrush: false,
-  smoothSize: 45,
+  brushSize: 25,
+  paintErase: false,
+  showMask: false,
+  paintTool: 'smooth',
+  paintStrength: 50,
   healTool: 'spot',
   repairStrokes: [],
   repairing: false,
   repairProgress: null,
   repairReady: false,
-  eraseSize: 40,
-  pushSize: 45,
   body: { status: 'idle', data: null },
   hold: false,
   split: false,
@@ -136,6 +151,13 @@ export function live(fn: (r: Recipe) => Recipe) {
   set({ recipe, repairStrokes: recipe.geo === state.recipe.geo ? state.repairStrokes : [] })
 }
 
+let historyTrimmed = false
+
+/** Bỏ mọi chỉnh sửa, đưa ảnh về như lúc mở. Là một bước nên vẫn hoàn tác được. */
+export function resetAll() {
+  change(() => freshRecipe())
+}
+
 /** Chốt trạng thái hiện tại thành một bước. Một lượt kéo = một bước. */
 export function commit() {
   const cur = state.hist[state.hi]
@@ -145,7 +167,13 @@ export function commit() {
     if (JSON.stringify(previous) === JSON.stringify(next)) return
   }
   const hist = [...state.hist.slice(0, state.hi + 1), state.recipe]
-  if (hist.length > HISTORY_STEPS + 1) hist.shift()
+  if (hist.length > HISTORY_STEPS + 1) {
+    hist.shift()
+    if (!historyTrimmed) {
+      historyTrimmed = true
+      toast(`Lịch sử chỉ giữ ${HISTORY_STEPS} bước gần nhất. Muốn về ảnh gốc thì dùng Đặt lại tất cả.`)
+    }
+  }
   set({ hist, hi: hist.length - 1 })
   scheduleDraft()
   if (usesPersonMask(state.recipe) && state.cutout.status === 'idle') void ensureCutout()
@@ -186,13 +214,17 @@ export function setTab(tab: Tab) {
   if (tab === 'body') ensureBody()
   if (tab === 'hair' && state.hairRegion.status === 'idle') void ensureHair()
 }
+export function setMode(mode: EditMode) {
+  try { localStorage.setItem(MODE_KEY, mode) } catch { /* chỉ là ghi nhớ cho lần sau */ }
+  set({ mode })
+}
 export const setParam = (param: AdjKey) => set({ param })
 export const selectDecoration = (selectedDecoration: string) => set({ selectedDecoration })
-export const setBrush = (brush: number) => set({ brush })
-export const setPushSize = (pushSize: number) => set({ pushSize })
-export const setSmoothSize = (smoothSize: number) => set({ smoothSize })
-export const setSkinBrush = (skinBrush: boolean) => set({ skinBrush })
-export const setEraseSize = (eraseSize: number) => set({ eraseSize })
+export const setBrushSize = (brushSize: number) => set({ brushSize: Math.min(100, Math.max(1, Math.round(brushSize))) })
+export const setPaintErase = (paintErase: boolean) => set({ paintErase })
+export const setShowMask = (showMask: boolean) => set({ showMask })
+export const setPaintTool = (paintTool: PaintKind) => set({ paintTool })
+export const setPaintStrength = (paintStrength: number) => set({ paintStrength })
 export function setHealTool(healTool: State['healTool']) {
   set({ healTool, repairStrokes: [] })
   if (healTool === 'object') void warmRepair()
@@ -331,6 +363,26 @@ export async function boot() {
 
 /* ---------- bản nháp ---------- */
 
+const thumbs = new WeakMap<Source, string>()
+/** Ảnh thu nhỏ vuông của ảnh gốc cho danh sách dự án; tính một lần cho mỗi ảnh. */
+function thumbOf(src: Source): string | undefined {
+  const hit = thumbs.get(src)
+  if (hit) return hit
+  try {
+    const side = 96
+    const c = document.createElement('canvas')
+    c.width = c.height = side
+    const p = src.preview
+    const k = Math.min(p.width, p.height)
+    c.getContext('2d')!.drawImage(p, (p.width - k) / 2, (p.height - k) / 3, k, k, 0, 0, side, side)
+    const url = c.toDataURL('image/jpeg', 0.72)
+    thumbs.set(src, url)
+    return url
+  } catch {
+    return undefined
+  }
+}
+
 let draftTimer = 0
 let draftWarned = false
 let pendingDraft: Draft | null = null
@@ -346,7 +398,7 @@ function scheduleDraft() {
   const { src, draftId, hist, hi } = state
   if (!src || !draftId) return
   clearTimeout(draftTimer)
-  pendingDraft = { id: draftId, blob: src.blob, name: src.name, sample: src.sample, recipe: hist[hi], savedAt: Date.now() }
+  pendingDraft = { id: draftId, blob: src.blob, name: src.name, sample: src.sample, recipe: hist[hi], savedAt: Date.now(), thumb: thumbOf(src) }
   draftTimer = window.setTimeout(flushDraft, 500)
 }
 
@@ -364,14 +416,14 @@ export function flushDraft() {
       if (state.draftId === draft.id) set({ draft: 'failed' })
       if (!draftWarned) {
         draftWarned = true
-        toast('Chưa lưu được bản nháp mới vì bộ nhớ trình duyệt đầy hoặc bị chặn. Bạn vẫn xuất ảnh được trong phiên này.', { err: true })
+        toast('Chưa lưu được nháp (trình duyệt hết chỗ hoặc đang chặn). Ảnh vẫn xuất được bình thường.', { err: true })
       }
     }
   })
 }
 
-export async function removeDraft() {
-  const id = state.draftId
+/** Xoá bản nháp: mặc định là ảnh đang chỉnh, hoặc một dự án trong danh sách. */
+export async function removeDraft(id = state.draftId) {
   if (!id) return
   if (pendingDraft?.id === id) {
     clearTimeout(draftTimer)
@@ -449,11 +501,14 @@ export function queueRepair(stroke: RepairStroke) {
 export const clearRepairSelection = () => set({ repairStrokes: [] })
 export const undoRepairStroke = () => set({ repairStrokes: state.repairStrokes.slice(0, -1) })
 
+/** Số lần xoá vật thể bằng AI cho mỗi ảnh (mỗi lần lưu một miếng ảnh trong bản nháp). */
+export const MAX_REPAIRS = 12
+
 export async function runRepair() {
   const { src, repairStrokes, recipe } = state
   if (!src || !repairStrokes.length || state.repairing) return
-  if (recipe.repairs.length >= 12) {
-    toast('Đã đạt 12 lần xử lý AI cho ảnh này.', { err: true })
+  if (recipe.repairs.length >= MAX_REPAIRS) {
+    toast(`Mỗi ảnh chỉ xoá AI được ${MAX_REPAIRS} lần. Xuất ảnh ra rồi mở lại để xoá tiếp.`, { err: true })
     return
   }
   set({ repairing: true, repairProgress: null })
@@ -470,7 +525,7 @@ export async function runRepair() {
     }))
     if (state.src !== src || state.repairStrokes !== repairStrokes) return
     if (state.recipe.repairs !== recipe.repairs || state.recipe.spots !== recipe.spots || state.recipe.erase !== recipe.erase) {
-      toast('Ảnh đã thay đổi trong lúc AI chạy. Hãy xử lý lại vùng đã tô.', { err: true })
+      toast('Ảnh vừa đổi trong lúc AI chạy. Bấm xử lý lại nhé.', { err: true })
       return
     }
     change((r) => ({ ...r, repairs: [...r.repairs, patch] }))
@@ -482,10 +537,10 @@ export async function runRepair() {
       && state.recipe.erase.length + repairStrokes.length <= MAX_ERASES) {
       change((r) => ({ ...r, erase: [...r.erase, ...repairStrokes.map(({ pts, r: radius }) => ({ pts, r: radius }))] }))
       clearRepairSelection()
-      toast('Máy không đủ bộ nhớ để chạy AI nên đã xoá bằng cách nhanh. Kết quả đẹp nhất trên nền đơn giản.')
+      toast('Máy không đủ bộ nhớ cho AI nên đã xoá bằng cách nhanh. Nền càng đơn giản càng đẹp.')
       return
     }
-    toast(error instanceof Error ? error.message : 'AI chưa xử lý được. Hãy thử lại.', { err: true })
+    toast(error instanceof RepairError ? error.message : navigator.onLine ? 'AI chưa xoá được chỗ này. Thử tô gọn quanh vật thể rồi bấm lại.' : 'Đang mất mạng nên AI chưa chạy được.', { err: true })
   } finally {
     set({ repairing: false, repairProgress: null, repairReady: !!state.recipe.repairs.length || state.repairReady })
   }
@@ -493,11 +548,20 @@ export async function runRepair() {
 
 /** Thêm một nét của cọ làm mịn; mỗi nét là một bước hoàn tác. */
 export function addBrushStroke(e: Erase, field: 'smoothBrush' | 'blurBrush') {
-  if (state.recipe[field].length >= MAX_ERASES * 2) {
-    toast('Ảnh này đã đạt số nét cọ tối đa. Hãy bỏ bớt nét đã tô để tiếp tục.', { err: true })
+  if (state.recipe[field].length >= MAX_LOCAL) {
+    toast('Hết chỗ cho nét mới. Bỏ bớt vài nét cũ rồi tô tiếp.', { err: true })
     return
   }
   change((r) => ({ ...r, [field]: [...r[field], e] }))
+}
+
+/** Thêm một nét cọ chỉnh vùng; mỗi nét là một bước hoàn tác. */
+export function addLocalStroke(e: LocalStroke) {
+  if (state.recipe.localBrush.length >= MAX_LOCAL) {
+    toast('Hết chỗ cho nét mới. Bỏ bớt vài nét cũ rồi tô tiếp.', { err: true })
+    return
+  }
+  change((r) => ({ ...r, localBrush: [...r.localBrush, e] }))
 }
 
 /** Thêm một bước kéo nắn trong lúc đang kéo; cả nét được chốt bằng commit(). */
@@ -541,7 +605,9 @@ export async function runExport(fmt: ExportFormat, scale: number, quality = .95)
     if (usesFace(recipe)) await ensureFace()
     if (state.src !== src) return false
     if (requiresFace(recipe) && state.face.status !== 'ready') {
-      toast('Chưa áp được chỉnh sửa khuôn mặt. Hãy kiểm tra mục Làm đẹp trước khi xuất.', { err: true })
+      toast(state.face.status === 'none'
+        ? 'Không thấy khuôn mặt nên chưa áp được làm đẹp. Đưa các thanh Làm đẹp về 0 rồi xuất lại.'
+        : 'Chưa tải được bộ nhận diện khuôn mặt. Vào Làm đẹp bấm Thử lại rồi xuất.', { err: true })
       return false
     }
     if (usesBody(recipe) && state.body.status === 'idle') await ensureBody()
@@ -550,19 +616,23 @@ export async function runExport(fmt: ExportFormat, scale: number, quality = .95)
         (state.cutout.status === 'idle' || state.cutout.status === 'loading')) await ensureCutout()
     if (state.src !== src) return false
     if (recipe.background !== 'original' && !state.cutout.result) {
-      toast('Chưa có kết quả tách nền. Kiểm tra công cụ Nền trước khi xuất.', { err: true })
+      toast('Nền chưa tách xong. Mở Nền & mờ xem lại rồi xuất.', { err: true })
       return false
     }
     if (usesHair(recipe) && !state.hairRegion.result) {
-      toast('Chưa có vùng tóc để áp chỉnh sửa. Kiểm tra công cụ Tóc trước khi xuất.', { err: true })
+      toast('Chưa tìm được vùng tóc. Mở Tóc xem lại rồi xuất.', { err: true })
       return false
     }
     const blob = await exportImage(src, recipe, state.face.mask, state.face.features, state.body.data, fmt, scale,
       state.cutout.result?.mask ?? null, state.hairRegion.result, quality)
-    await deliverImage(blob, `${src.name}-kulstu.${fmt === 'png' ? 'png' : 'jpg'}`)
+    await deliverImage(blob, `${src.name}-kulstu.${fmt === 'jpeg' ? 'jpg' : fmt}`)
     return true
-  } catch {
-    toast('Chưa xuất được ảnh ở kích thước này. Phiên chỉnh vẫn được giữ nguyên.', {
+  } catch (error) {
+    if (error instanceof ExportFormatError) {
+      toast(error.message, { err: true })
+      return false
+    }
+    toast('Ảnh lớn quá nên chưa xuất được. Chỉnh sửa vẫn còn nguyên.', {
       err: true,
       action: { label: 'Thử kích thước nhỏ bằng nửa', run: () => void runExport(fmt, scale / 2, quality) },
     })

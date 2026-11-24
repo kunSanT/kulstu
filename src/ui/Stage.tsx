@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { applyErases } from '../engine/erase'
 import { applySpots } from '../engine/heal'
 import { brushMask } from '../engine/smoothBrush'
+import { localMasks, maskSlot, PAINT_TOOLS, type PaintKind } from '../engine/localBrush'
 import { drawDecorations } from '../engine/decorations'
 import { drawRepairs } from '../services/repair'
 import { applyPushes, fieldAt, makeField, type Field } from '../engine/liquify'
 import { displayToSrc, orientedSize, outputSize, warpPoint } from '../engine/recipe'
 import { createRenderer, type Renderer } from '../engine/renderer'
 import { haptic } from './haptic'
-import { addBrushStroke, addPush, addSpot, commit, getState, queueRepair, setHold, setSplit, setSplitX, toast, useStore } from '../store'
+import { addBrushStroke, addLocalStroke, addPush, setBrushSize, addSpot, commit, getState, queueRepair, setHold, setSplit, setSplitX, toast, useStore } from '../store'
 import { CropOverlay } from './CropOverlay'
 import { DecorationHandles } from './DecorationHandles'
 import { SunlightHandles } from './SunlightHandles'
@@ -37,26 +38,30 @@ function drawAround(g: CanvasRenderingContext2D, layer: HTMLCanvasElement, x: nu
   g.drawImage(layer, (x0 - r.left) * kx, (y0 - r.top) * ky, (x1 - x0) * kx, (y1 - y0) * ky,
     (x0 - x) * k, (y0 - y) * k, (x1 - x0) * k, (y1 - y0) * k)
 }
-export const brushRadius = (brush: number) => 0.004 + (brush / 100) * 0.026
-export const smoothRadius = (size: number) => 0.01 + (size / 100) * 0.07
-export const eraseRadius = (size: number) => 0.006 + (size / 100) * 0.06
-export const pushRadius = (size: number) => 0.02 + (size / 100) * 0.16
+/**
+ * Bán kính cọ (theo cạnh dài ảnh) từ cỡ cọ chung 1–100. Mọi loại cọ dùng chung cỡ này, nên đổi cọ không làm vòng cọ nhảy.
+ * Đường cong mũ 1.6: cỡ nhỏ chỉnh được tinh (chấm mụn), cỡ lớn vẫn đủ rộng cho kéo nắn.
+ */
+export const brushRadius = (size: number) => 0.003 + Math.pow(Math.min(100, Math.max(1, size)) / 100, 1.6) * 0.15
 /** Bán kính cọ của công cụ đang mở, tính theo cạnh dài của ảnh. */
 const toolRadius = () => {
   const s = getState()
-  if (s.tab === 'body') return pushRadius(s.pushSize)
-  if (s.tab === 'skin') return smoothRadius(s.smoothSize)
-  return s.healTool !== 'spot' ? eraseRadius(s.eraseSize) : brushRadius(s.brush)
+  return brushRadius(s.brushSize)
 }
 /** Kéo trên ảnh đang làm gì: chấm mụn, xoá vật thể, kéo nắn, tô mịn; null = kéo để dời ảnh. */
 const brushMode = () => {
   const s = getState()
   if (s.tab === 'heal') return s.healTool === 'spot' || s.healTool === 'blur' ? s.healTool : s.repairing ? null : 'erase'
-  if (s.tab === 'body') return 'push'
-  if (s.tab === 'skin' && s.skinBrush) return 'smooth'
+  if (s.tab === 'body') return s.mode === 'manual' ? 'push' : null
+  if (PAINT_TOOLS[s.tab]) return s.mode === 'manual' ? 'paint' : null
   return null
 }
 const isBrushTab = () => !!brushMode()
+/** Cọ thực sự dùng ở công cụ này: cọ đang chọn nếu công cụ có, không thì cọ đầu tiên của công cụ. */
+export const paintToolFor = (tab: string, tool: PaintKind): PaintKind => {
+  const tools = PAINT_TOOLS[tab] ?? []
+  return tools.includes(tool) ? tool : tools[0] ?? 'smooth'
+}
 
 /**
  * Mật độ điểm ảnh dùng để dựng ảnh. iPhone báo 3×, nhưng 2× đã nét bằng mắt thường
@@ -76,14 +81,11 @@ export function Stage() {
   const personMask = useStore((s) => s.cutout.result?.mask ?? null)
   const hair = useStore((s) => s.hairRegion.result)
   const features = useStore((s) => s.face.features)
-  const brush = useStore((s) => s.brush)
-  const pushSize = useStore((s) => s.pushSize)
-  const eraseSize = useStore((s) => s.eraseSize)
-  const smoothSize = useStore((s) => s.smoothSize)
-  const skinBrush = useStore((s) => s.skinBrush)
+  const brushSize = useStore((s) => s.brushSize)
+  const mode = useStore((s) => s.mode)
   const bodyData = useStore((s) => s.body.data)
   const cropMode = tab === 'crop'
-  const healMode = tab === 'heal' || tab === 'body' || (tab === 'skin' && skinBrush)
+  const healMode = tab === 'heal' || ((tab === 'body' || !!PAINT_TOOLS[tab]) && mode === 'manual')
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const decorationsRef = useRef<HTMLCanvasElement>(null)
@@ -115,7 +117,9 @@ export function Stage() {
     const outW = Math.max(1, Math.round(d.w * k))
     const outH = Math.max(1, Math.round(d.h * k))
     const split = s.split && !s.hold && !crop ? s.splitX : undefined
-    R.current.draw(s.recipe, { outW, outH, fullFrame: crop, orig: s.hold, split })
+    const painting = s.mode === 'manual' && !!PAINT_TOOLS[s.tab] && s.showMask && !s.hold
+    const maskOverlay = painting ? maskSlot(paintToolFor(s.tab, s.paintTool)) : undefined
+    R.current.draw(s.recipe, { outW, outH, fullFrame: crop, orig: s.hold, split, overlay: maskOverlay })
     const overlay = decorationsRef.current
     if (!overlay) return
     overlay.hidden = crop || s.hold || !s.recipe.decorations.length
@@ -147,7 +151,7 @@ export function Stage() {
     try {
       R.current = createRenderer(canvas)
     } catch {
-      toast('Trình duyệt này chưa hỗ trợ WebGL2 nên chưa chỉnh được ảnh. Hãy dùng Chrome hoặc Safari bản mới.', { err: true, sticky: true })
+      toast('Trình duyệt này chưa chỉnh ảnh được (thiếu WebGL2). Dùng Chrome hoặc Safari bản mới nhé.', { err: true, sticky: true })
       return
     }
     // iOS hay thu hồi WebGL khi chuyển sang app khác. Dựng lại bằng canvas mới thay vì chờ trình duyệt trả lại,
@@ -239,12 +243,22 @@ export function Stage() {
     draw()
   }, [personMask, hair, src, draw, gl])
 
+  // bật/tắt lớp hiện vùng tô, đổi cọ hoặc đổi chế độ: vẽ lại để lớp phủ khớp với cọ đang chọn
+  const showMask = useStore((s) => s.showMask)
+  const paintTool = useStore((s) => s.paintTool)
+  useEffect(() => draw(), [showMask, paintTool, mode, tab, draw])
   const smoothStrokes = recipe.smoothBrush
   useEffect(() => {
     if (!R.current || !src) return
     R.current.setBrushMask(smoothStrokes.length ? brushMask(src.w, src.h, smoothStrokes) : null)
     draw()
   }, [src, smoothStrokes, draw, gl])
+  const localStrokes = recipe.localBrush
+  useEffect(() => {
+    if (!R.current || !src) return
+    R.current.setLocalMasks(localMasks(src.w, src.h, localStrokes))
+    draw()
+  }, [src, localStrokes, draw, gl])
   const blurStrokes = recipe.blurBrush
   useEffect(() => {
     if (!R.current || !src) return
@@ -346,7 +360,7 @@ export function Stage() {
     type G = { n: number; cx: number; cy: number; d: number } | null
     let gest: G = null
     // nét lướt xoá mụn đang vẽ: vị trí chấm gần nhất trên màn hình
-    let stroke: { x: number; y: number; full: boolean; erase?: { src: number[]; view: number[]; kind: 'erase' | 'smooth' | 'blur' } } | null = null
+    let stroke: { x: number; y: number; full: boolean; erase?: { src: number[]; view: number[]; kind: 'erase' | 'smooth' | 'blur' | 'paint' } } | null = null
     let space = false
     const snap = (): G => {
       const a = [...pts.values()]
@@ -461,9 +475,9 @@ export function Stage() {
       const s = getState()
       const w = srcAt(clientX, clientY)
       if (!w || !stroke) return
-      if (!addSpot({ x: w.x, y: w.y, r: brushRadius(s.brush) }) && !stroke.full) {
+      if (!addSpot({ x: w.x, y: w.y, r: brushRadius(s.brushSize) }) && !stroke.full) {
         stroke.full = true
-        toast('Ảnh này đã đạt số điểm xoá mụn tối đa. Hãy bỏ bớt điểm đã xoá để tiếp tục.', { err: true })
+        toast('Đã chấm đủ số điểm cho ảnh này. Bỏ bớt vài điểm rồi chấm tiếp.', { err: true })
       }
     }
     /** Kéo nắn: đẩy vùng quanh cọ theo đoạn vừa kéo trên màn hình. */
@@ -475,9 +489,9 @@ export function Stage() {
       const a = at(x0, y0)
       const b = at(x1, y1)
       const round = (v: number) => Math.round(v * 1e5) / 1e5
-      if (!addPush({ x: round(b.x), y: round(b.y), dx: round(b.x - a.x), dy: round(b.y - a.y), r: round(pushRadius(s.pushSize)) }) && !stroke.full) {
+      if (!addPush({ x: round(b.x), y: round(b.y), dx: round(b.x - a.x), dy: round(b.y - a.y), r: round(brushRadius(s.brushSize)) }) && !stroke.full) {
         stroke.full = true
-        toast('Ảnh này đã đạt số nét kéo nắn tối đa. Hãy bỏ bớt nét kéo để tiếp tục.', { err: true })
+        toast('Đã kéo nắn đủ số nét cho ảnh này. Bỏ bớt vài nét rồi kéo tiếp.', { err: true })
       }
     }
     const endStroke = (cancelSmooth = false) => {
@@ -491,8 +505,13 @@ export function Stage() {
         const s = getState()
         const r5 = (v: number) => Math.round(v * 1e5) / 1e5
         if (cancelSmooth) return
-        if (er.kind === 'erase') queueRepair({ pts: er.src, view: er.view, r: r5(eraseRadius(s.eraseSize)) })
-        else addBrushStroke({ pts: er.src, r: r5(toolRadius()) }, er.kind === 'smooth' ? 'smoothBrush' : 'blurBrush')
+        if (er.kind === 'erase') queueRepair({ pts: er.src, view: er.view, r: r5(brushRadius(s.brushSize)) })
+        else if (er.kind === 'paint') {
+          const tool = paintToolFor(s.tab, s.paintTool)
+          const stroke = { pts: er.src, r: r5(toolRadius()), ...(s.paintErase ? { x: true } : {}) }
+          if (tool === 'smooth' || tool === 'blur') addBrushStroke(stroke, tool === 'smooth' ? 'smoothBrush' : 'blurBrush')
+          else addLocalStroke({ ...stroke, k: tool, a: s.paintStrength / 100 })
+        } else addBrushStroke({ pts: er.src, r: r5(toolRadius()) }, er.kind === 'smooth' ? 'smoothBrush' : 'blurBrush')
         return
       }
       commit() // cả nét lướt là một bước hoàn tác
@@ -518,7 +537,7 @@ export function Stage() {
       if (isBrushTab() && pts.size === 1 && !space) {
         stroke = { x: e.clientX, y: e.clientY, full: false }
         const mode = brushMode()
-        if (mode === 'erase' || mode === 'smooth' || mode === 'blur') {
+        if (mode === 'erase' || mode === 'blur' || mode === 'paint') {
           if (srcAt(e.clientX, e.clientY)) {
             stroke.erase = { src: [], view: [], kind: mode }
             paint(e.clientX, e.clientY)
@@ -596,10 +615,24 @@ export function Stage() {
       tapStart = null
     }
     const onLeave = () => ringRef.current && !stroke && (ringRef.current.hidden = true)
-    // giữ phím cách để kéo ảnh khi đang ở công cụ xoá mụn
+    // giữ phím cách để kéo ảnh ở mọi công cụ; [ và ] đổi cỡ cọ; \ bật/tắt xem ảnh gốc
     const typing = (e: KeyboardEvent) => /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test((e.target as Element).tagName) || (e.target as Element).getAttribute('role') === 'slider'
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || typing(e) || !isBrushTab()) return
+      if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.key === '[' || e.key === ']') {
+        e.preventDefault()
+        const size = getState().brushSize
+        // bước theo tỷ lệ: cỡ nhỏ đổi tinh, cỡ lớn đổi nhanh
+        const step = Math.max(1, Math.round(size * 0.15))
+        setBrushSize(size + (e.key === ']' ? step : -step))
+        return
+      }
+      if (e.key === '\\') {
+        e.preventDefault()
+        setHold(!getState().hold)
+        return
+      }
+      if (e.code !== 'Space' || e.repeat) return
       e.preventDefault()
       space = true
       vp.parentElement!.classList.add('panning')
@@ -647,7 +680,7 @@ export function Stage() {
     placeRing(ring, b.left + b.width / 2, b.top + b.height / 2)
     const t = setTimeout(() => (ring.hidden = true), 900)
     return () => clearTimeout(t)
-  }, [brush, pushSize, eraseSize, smoothSize, healMode])
+  }, [brushSize, healMode])
 
   /* ---------- so sánh ---------- */
 

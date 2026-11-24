@@ -39,3 +39,8 @@ app-tmp
 
 # dự án Xcode do Capacitor sinh ra trên máy build (xem scripts/ios-setup.mjs)
 ios/
+
+# ảnh logo gốc dạng mockup; logo dùng trong app là bản vẽ lại public/kulstu-mark.svg và kulstu-glyph.svg
+/logo.jpg
+# tệp phụ do Claude tạo khi làm việc (không thuộc mã nguồn)
+Claude outputs/

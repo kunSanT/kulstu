@@ -49,7 +49,7 @@ export function BackgroundPanel() {
         </label>
       </div>
       {busy && <p className="note" role="status">Đang nhận diện người trong ảnh…</p>}
-      {status === 'none' && <p className="note" role="status">Không tìm thấy người để tách nền. Hãy thử ảnh có người rõ hơn.</p>}
+      {status === 'none' && <p className="note" role="status">Không thấy người trong ảnh để tách nền.</p>}
       {status === 'error' && <p className="note" role="status">Chưa tách được nền. <button type="button" className="link" onClick={() => void ensureCutout()}>Thử lại</button></p>}
     </>
   )
@@ -254,7 +254,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
         </svg>
       </button>
     </header>
-    <label className="collage-files">
+    <label className="file-button">
       {photos.length ? `Thêm ảnh (${photos.length}/${COLLAGE_MAX})` : `Chọn ${COLLAGE_MIN}–${COLLAGE_MAX} ảnh`}
       <input type="file" accept="image/*" multiple disabled={busy || !room} onChange={(e) => {
         const files = Array.from(e.currentTarget.files ?? [])
@@ -372,7 +372,7 @@ export function CollageDialog({ dialog }: { dialog: React.RefObject<HTMLDialogEl
         ))}
       </div>
       <p className="note">
-        {photos.length < COLLAGE_MIN ? `Thêm ít nhất ${COLLAGE_MIN - photos.length} ảnh nữa để ghép.` : 'Kéo ảnh lên ảnh khác để đổi chỗ. Kéo vạch giữa hai ảnh để đổi độ rộng. Bấm × để xoá ảnh.'}
+        {photos.length < COLLAGE_MIN ? `Thêm ít nhất ${COLLAGE_MIN - photos.length} ảnh nữa để ghép.` : 'Kéo ảnh để đổi chỗ, kéo vạch giữa để đổi cỡ, bấm × để bỏ ảnh.'}
       </p>
     </>}
     {error && <p className="note" role="alert">{error}</p>}

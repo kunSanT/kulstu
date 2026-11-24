@@ -6,8 +6,10 @@ import { createRenderer } from '../engine/renderer'
 import { decodeFile, releaseSource, type Source } from '../services/image'
 import { matchColors } from '../engine/colorMatch'
 import { repairAvailable, useServer } from '../services/repair'
-import { change, clearRepairSelection, commit, ensureBody, ensureFace, getState, live, runRepair, setBrush, setEraseSize, setHealTool, setParam, setPushSize, setSkinBrush, setSmoothSize, toast, undoRepairStroke, useStore } from '../store'
+import { change, clearRepairSelection, commit, ensureBody, ensureFace, getState, live, MAX_REPAIRS, runRepair, setBrushSize, setHealTool, setMode, setPaintErase, setPaintStrength, setPaintTool, setParam, setShowMask, toast, undoRepairStroke, useStore } from '../store'
 import { Band } from './Band'
+import { MAX_LOCAL, PAINT_NAMES, PAINT_TOOLS, type PaintKind } from '../engine/localBrush'
+import { paintToolFor } from './Stage'
 
 /* ---------- Cắt ---------- */
 
@@ -72,7 +74,7 @@ export function ColorMatchPanel() {
   }
   return (
     <>
-      <label className="collage-files">{loading ? 'Đang đọc màu…' : 'Bắt màu ảnh mẫu'}
+      <label className="file-button">{loading ? 'Đang đọc màu…' : 'Chọn ảnh mẫu để bắt màu'}
         <input type="file" accept="image/*" disabled={loading} onChange={(event) => {
           const file = event.currentTarget.files?.[0]
           event.currentTarget.value = ''
@@ -259,7 +261,7 @@ export function TemplatePanel() {
       <p className="note">
         {cur
           ? `${cur.name}: ${cur.hint.toLowerCase()}${cur.beauty || cur.makeup ? ', có làm đẹp cho khuôn mặt' : ''}. Vẫn chỉnh tiếp được từng phần.`
-          : 'Chạm một phong cách để áp màu, ánh sáng và làm đẹp trong một lần.'}
+          : 'Chọn một kiểu để áp màu, ánh sáng và làm đẹp cùng lúc.'}
       </p>
     </>
   )
@@ -282,7 +284,7 @@ export function SunlightPanel() {
     <>
       <Band label="Nắng chiều" value={sunlight} min={0} max={100} origin={0} unit="%"
         onLive={(value) => live((r) => ({ ...r, sunlight: value }))} onCommit={commit} />
-      {sunlight > 0 && <p className="note">Kéo hai điểm trên ảnh để đặt nguồn và hướng tia nắng.</p>}
+      {sunlight > 0 && <p className="note">Kéo hai chấm trên ảnh để chỉnh hướng nắng.</p>}
     </>
   )
 }
@@ -315,6 +317,38 @@ const SCULPT_BANDS: { k: MakeupKey; name: string }[] = [
   { k: 'highlight', name: 'Bắt sáng' },
 ]
 
+/** Gợi ý khi không tải được mô hình nhận diện: mất mạng hay trình duyệt không chạy được. */
+export const modelHint = () => typeof navigator !== 'undefined' && !navigator.onLine
+  ? 'Máy đang mất mạng.'
+  : 'Có thể trình duyệt đang chặn WebGL. Thử Chrome, Edge hoặc Firefox bản mới.'
+
+/** Cỡ cọ chung cho mọi loại cọ; đổi nhanh bằng phím [ và ]. */
+function BrushSize({ disabled }: { disabled?: boolean }) {
+  const size = useStore((s) => s.brushSize)
+  return <Band label="Cỡ cọ" value={size} min={1} max={100} noReset disabled={disabled} onLive={setBrushSize} onCommit={() => {}} />
+}
+
+/** Nhóm thanh kéo thu gọn được; trạng thái mở/đóng nhớ theo trình duyệt. */
+function Section({ id, title, open = true, children }: { id: string; title: string; open?: boolean; children: React.ReactNode }) {
+  const key = `kulstu.section.${id}`
+  const initial = (() => {
+    try {
+      const saved = localStorage.getItem(key)
+      return saved === null ? open : saved === '1'
+    } catch {
+      return open
+    }
+  })()
+  return (
+    <details className="section" open={initial} onToggle={(e) => {
+      try { localStorage.setItem(key, e.currentTarget.open ? '1' : '0') } catch { /* chỉ là ghi nhớ */ }
+    }}>
+      <summary>{title}</summary>
+      <div className="section-body">{children}</div>
+    </details>
+  )
+}
+
 export function SkinPanel() {
   const face = useStore((s) => s.face)
   const smooth = useStore((s) => s.recipe.smooth)
@@ -325,97 +359,84 @@ export function SkinPanel() {
   const shape = useStore((s) => s.recipe.shape)
   const recipe = useStore((s) => s.recipe)
   const sample = useStore((s) => s.src?.sample)
-  const brushOn = useStore((s) => s.skinBrush)
-  const smoothSize = useStore((s) => s.smoothSize)
-  const strokes = useStore((s) => s.recipe.smoothBrush.length)
   const ready = face.status === 'ready'
   const look = BEAUTY_LOOKS.find((l) => l.id === beauty.id)
   const makeupLook = currentMakeupLook(recipe)
   const setMakeup = (k: MakeupKey) => (v: number) => live((r) => ({ ...r, makeup: { ...r.makeup, [k]: v } }))
   return (
     <>
-      <h2 className="group-title">Làm đẹp một chạm</h2>
-      <div className="chips" role="group" aria-label="Kiểu làm đẹp">
-        <button type="button" className="chip" aria-pressed={!look} disabled={!ready} onClick={() => change((r) => applyBeauty(r, null, 0))}>Gốc</button>
-        {BEAUTY_LOOKS.map((l) => (
-          <button key={l.id} type="button" className="chip" title={l.hint} aria-pressed={look?.id === l.id} disabled={!ready}
-            onClick={() => change((r) => applyBeauty(r, l.id, r.beauty.id === l.id ? r.beauty.amt : BEAUTY_DEFAULT))}>{l.name}</button>
-        ))}
-      </div>
-      {look && (
-        <Band label={`Cường độ ${look.name}`} value={beauty.amt} min={0} max={100} origin={0} unit="%" disabled={!ready}
-          onLive={(v) => live((r) => applyBeauty(r, look.id, v))} onCommit={commit} />
-      )}
       {face.status === 'loading' && (
         <p className="note status"><span className="spin" />Đang tải mô hình và tìm khuôn mặt…</p>
       )}
       {face.status === 'error' && (
         <p className="note status">
-          Chưa tải được mô hình nhận diện nên chưa chỉnh được nét mặt. Các công cụ khác vẫn dùng bình thường.
+          Chưa tải được mô hình nhận diện khuôn mặt. {modelHint()}
           <button type="button" className="chip" onClick={() => ensureFace(true)}>Thử lại</button>
         </p>
       )}
-      {face.status === 'none' && (
-        <p className="note">Chưa thấy khuôn mặt. Bạn vẫn dùng được cọ.</p>
-      )}
-      {ready && !sample && face.count > 1 && <p className="note">Áp cho khuôn mặt lớn nhất.</p>}
-      <h3 className="group-title">Da</h3>
-      <Band label="Mịn da" value={smooth} min={0} max={100} origin={0} unit="%" disabled={!ready}
-        onLive={(v) => live((r) => ({ ...r, smooth: v }))} onCommit={commit} />
-      <Band label="Trắng da" value={white} min={0} max={100} origin={0} unit="%" disabled={face.status === 'loading'}
-        onLive={(v) => live((r) => ({ ...r, white: v }))} onCommit={commit} />
-      <h3 className="group-title">Trang điểm</h3>
-      <div className="chips" role="group" aria-label="Mẫu trang điểm">
-        {MAKEUP_LOOKS.map((l) => (
-          <button key={l.id} type="button" className="chip" aria-pressed={makeupLook === l.id} disabled={!ready}
-            onClick={() => change((r) => applyMakeupLook(r, l.id))}>{l.name}</button>
-        ))}
-      </div>
-      {MAKEUP_BANDS.map((b) => (
-        <div key={b.k} className="band-group">
-          <Band label={b.name} value={makeup[b.k]} min={0} max={b.max} origin={0} unit="%" disabled={!ready}
-            onLive={setMakeup(b.k)} onCommit={commit} />
-          {b.k === 'lip' && <Swatches label="Màu son" items={LIP_SHADES} value={shade.lip} disabled={!ready}
-            onPick={(id) => change((r) => ({ ...r, shade: { ...r.shade, lip: id }, makeup: { ...r.makeup, lip: r.makeup.lip || 14 } }))} />}
-          {b.k === 'blush' && <Swatches label="Màu má hồng" items={BLUSH_SHADES} value={shade.blush} disabled={!ready}
-            onPick={(id) => change((r) => ({ ...r, shade: { ...r.shade, blush: id }, makeup: { ...r.makeup, blush: r.makeup.blush || 28 } }))} />}
+      {face.status === 'none' && <p className="note">Không thấy khuôn mặt nên các thanh này chưa dùng được. <button type="button" className="link" onClick={() => setMode('manual')}>Dùng cọ</button></p>}
+      {ready && !sample && face.count > 1 && <p className="note">Ảnh có {face.count} khuôn mặt, đang áp cho mặt to nhất.</p>}
+      <Section id="beauty" title="Kiểu làm đẹp">
+        <div className="chips" role="group" aria-label="Kiểu làm đẹp">
+          <button type="button" className="chip" aria-pressed={!look} disabled={!ready} onClick={() => change((r) => applyBeauty(r, null, 0))}>Gốc</button>
+          {BEAUTY_LOOKS.map((l) => (
+            <button key={l.id} type="button" className="chip" title={l.hint} aria-pressed={look?.id === l.id} disabled={!ready}
+              onClick={() => change((r) => applyBeauty(r, l.id, r.beauty.id === l.id ? r.beauty.amt : BEAUTY_DEFAULT))}>{l.name}</button>
+          ))}
         </div>
-      ))}
-      <h3 className="group-title">Tạo khối</h3>
-      {SCULPT_BANDS.map((b) => (
-        <Band key={b.k} label={b.name} value={makeup[b.k]} min={0} max={100} origin={0} unit="%" disabled={!ready}
-          onLive={setMakeup(b.k)} onCommit={commit} />
-      ))}
-      <h3 className="group-title">Chỉnh nét mặt</h3>
-      {SHAPES.map((sh) => (
-        <Band key={sh.k} label={sh.name} value={shape[sh.k]} min={sh.k === 'faceSlim' ? 0 : -100} max={100}
-          origin={0} signed={sh.k !== 'faceSlim'} unit={sh.k === 'faceSlim' ? '%' : undefined} disabled={!ready}
-          onLive={(v) => live((r) => ({ ...r, shape: { ...r.shape, [sh.k]: v } }))} onCommit={commit} />
-      ))}
-      <h2 className="group-title">Thủ công</h2>
-      <h3 className="group-title">Cọ làm mịn</h3>
-      <p className="note">Tô lên vùng cần làm mịn.</p>
-      <div className="row-between">
-        <button type="button" className="chip" aria-pressed={brushOn} onClick={() => setSkinBrush(!brushOn)}>
-          {brushOn ? 'Đang tô: kéo trên ảnh để làm mịn' : 'Bật cọ làm mịn'}
-        </button>
-        <button type="button" className="chip" disabled={!strokes} onClick={() => change((r) => ({ ...r, smoothBrush: [] }))}>
-          Bỏ hết nét tô
-        </button>
-      </div>
-      <Band label="Cỡ cọ" value={smoothSize} min={1} max={100} noReset onLive={setSmoothSize} onCommit={() => {}} />
+        {look && (
+          <Band label={`Cường độ ${look.name}`} value={beauty.amt} min={0} max={100} origin={0} unit="%" disabled={!ready}
+            onLive={(v) => live((r) => applyBeauty(r, look.id, v))} onCommit={commit} />
+        )}
+      </Section>
+      <Section id="skin" title="Da">
+        <Band label="Mịn da" value={smooth} min={0} max={100} origin={0} unit="%" disabled={!ready}
+          onLive={(v) => live((r) => ({ ...r, smooth: v }))} onCommit={commit} />
+        <Band label="Trắng da" value={white} min={0} max={100} origin={0} unit="%" disabled={face.status === 'loading'}
+          onLive={(v) => live((r) => ({ ...r, white: v }))} onCommit={commit} />
+      </Section>
+      <Section id="makeup" title="Trang điểm" open={false}>
+        <div className="chips" role="group" aria-label="Mẫu trang điểm">
+          {MAKEUP_LOOKS.map((l) => (
+            <button key={l.id} type="button" className="chip" aria-pressed={makeupLook === l.id} disabled={!ready}
+              onClick={() => change((r) => applyMakeupLook(r, l.id))}>{l.name}</button>
+          ))}
+        </div>
+        {MAKEUP_BANDS.map((b) => (
+          <div key={b.k} className="band-group">
+            <Band label={b.name} value={makeup[b.k]} min={0} max={b.max} origin={0} unit="%" disabled={!ready}
+              onLive={setMakeup(b.k)} onCommit={commit} />
+            {b.k === 'lip' && <Swatches label="Màu son" items={LIP_SHADES} value={shade.lip} disabled={!ready}
+              onPick={(id) => change((r) => ({ ...r, shade: { ...r.shade, lip: id }, makeup: { ...r.makeup, lip: r.makeup.lip || 14 } }))} />}
+            {b.k === 'blush' && <Swatches label="Màu má hồng" items={BLUSH_SHADES} value={shade.blush} disabled={!ready}
+              onPick={(id) => change((r) => ({ ...r, shade: { ...r.shade, blush: id }, makeup: { ...r.makeup, blush: r.makeup.blush || 28 } }))} />}
+          </div>
+        ))}
+      </Section>
+      <Section id="sculpt" title="Tạo khối" open={false}>
+        {SCULPT_BANDS.map((b) => (
+          <Band key={b.k} label={b.name} value={makeup[b.k]} min={0} max={100} origin={0} unit="%" disabled={!ready}
+            onLive={setMakeup(b.k)} onCommit={commit} />
+        ))}
+      </Section>
+      <Section id="shape" title="Nét mặt" open={false}>
+        {SHAPES.map((sh) => (
+          <Band key={sh.k} label={sh.name} value={shape[sh.k]} min={sh.k === 'faceSlim' ? 0 : -100} max={100}
+            origin={0} signed={sh.k !== 'faceSlim'} unit={sh.k === 'faceSlim' ? '%' : undefined} disabled={!ready}
+            onLive={(v) => live((r) => ({ ...r, shape: { ...r.shape, [sh.k]: v } }))} onCommit={commit} />
+        ))}
+      </Section>
     </>
   )
 }
 
-/* ---------- Xoá: mụn và vật thể ---------- */
+/* ---------- Sửa: xoá mụn và vật thể (chỉ có cọ; cọ làm mờ nằm ở Ảnh → Nền & mờ) ---------- */
 
 export function HealPanel() {
-  const tool = useStore((s) => s.healTool)
-  const brush = useStore((s) => s.brush)
-  const eraseSize = useStore((s) => s.eraseSize)
+  const chosen = useStore((s) => s.healTool)
+  const tool = chosen === 'object' && repairAvailable ? 'object' : 'spot'
   const n = useStore((s) => s.recipe.spots.length)
-  const blurCount = useStore((s) => s.recipe.blurBrush.length)
+  const repairs = useStore((s) => s.recipe.repairs.length)
   const m = useStore((s) => s.recipe.erase.length + s.recipe.repairs.length)
   const pending = useStore((s) => s.repairStrokes.length)
   const processing = useStore((s) => s.repairing)
@@ -425,59 +446,51 @@ export function HealPanel() {
   const warming = !processing && typeof progress === 'number'
   return (
     <>
-      <div className="chips" role="group" aria-label="Công cụ xoá">
-        <button type="button" className="chip" aria-pressed={tool === 'spot'} onClick={() => setHealTool('spot')}>Xoá mụn</button>
-        <button type="button" className="chip" aria-pressed={tool === 'blur'} onClick={() => setHealTool('blur')}>Cọ làm mờ</button>
-        <button type="button" className="chip" disabled={processing || !repairAvailable} aria-pressed={tool === 'object'} onClick={() => setHealTool('object')}>Xoá vật thể AI</button>
+      <div className="chips" role="radiogroup" aria-label="Cọ sửa ảnh">
+        <button type="button" role="radio" className="chip" aria-checked={tool === 'spot'} aria-pressed={tool === 'spot'} onClick={() => setHealTool('spot')}>Xoá mụn</button>
+        <button type="button" role="radio" className="chip" disabled={processing || !repairAvailable} aria-checked={tool === 'object'} aria-pressed={tool === 'object'} onClick={() => setHealTool('object')}>Xoá vật thể AI</button>
       </div>
       {!repairAvailable && <p className="note">Bản này chưa bật xoá vật thể AI.</p>}
       {tool === 'spot' ? (
         <>
-          <p className="note">
-            Chạm hoặc kéo qua vùng mụn.
-          </p>
-          <Band label="Cỡ cọ" value={brush} min={1} max={100} noReset onLive={setBrush} onCommit={() => {}} />
+          <p className="note">Chấm hoặc quẹt qua nốt mụn. Để cọ to hơn nốt mụn một chút.</p>
+          <BrushSize />
           <div className="row-between">
             <span className="count">{n ? `Đã chấm ${n} điểm` : 'Chưa xoá điểm nào'}</span>
             <button type="button" className="chip" disabled={!n} onClick={() => change((r) => ({ ...r, spots: [] }))}>
-              Bỏ hết điểm đã xoá
+              Bỏ hết
             </button>
           </div>
-        </>
-      ) : tool === 'blur' ? (
-        <>
-          <p className="note">Tô lên vùng cần làm mờ.</p>
-          <Band label="Cỡ cọ" value={eraseSize} min={1} max={100} noReset onLive={setEraseSize} onCommit={() => {}} />
-          <button type="button" className="chip" disabled={!blurCount} onClick={() => change((r) => ({ ...r, blurBrush: [] }))}>Bỏ nét làm mờ</button>
         </>
       ) : (
         <>
           <p className="note">
             {useServer
-              ? 'Tô kín vật thể và bóng của nó. Vùng ảnh quanh chỗ tô được gửi lên máy chủ để AI xoá, không lưu lại.'
-              : 'Tô kín vật thể và bóng của nó. Lần đầu tải model khoảng 8 MB, các lần sau dùng bản đã lưu.'}
+              ? 'Tô kín vật thể, cả phần bóng. Chỗ tô được gửi lên máy chủ để xoá rồi bỏ ngay.'
+              : 'Tô kín vật thể, cả phần bóng. Lần đầu cần tải khoảng 8 MB.'}
           </p>
-          <Band label="Cỡ cọ" value={eraseSize} min={1} max={100} noReset disabled={processing} onLive={setEraseSize} onCommit={() => {}} />
+          <BrushSize disabled={processing} />
           <div className="chips" role="group" aria-label="Vùng tô AI">
-            <button type="button" className="primary" disabled={!pending || processing} onClick={() => void runRepair()}>
+            <button type="button" className="primary" disabled={!pending || processing || repairs >= MAX_REPAIRS} onClick={() => void runRepair()}>
               {processing ? 'Đang xử lý AI…' : 'Xử lý vùng tô'}
             </button>
             <button type="button" className="chip" disabled={!pending || processing} onClick={undoRepairStroke}>Bỏ nét cuối</button>
             <button type="button" className="chip" disabled={!pending || processing} onClick={clearRepairSelection}>Bỏ vùng tô</button>
           </div>
           <div className="row-between">
-            <span className="count" role="status">{processing ? busyText : warming ? `Đang tải sẵn AI ${progress}%` : pending ? `${pending} nét đã tô` : m ? `Đã xử lý ${m} lần` : ready ? 'AI đã sẵn sàng' : ''}</span>
-            <button type="button" className="chip" disabled={!m || processing} onClick={() => change((r) => ({ ...r, erase: [], repairs: [] }))}>
-              Hoàn lại vật thể đã xoá
-            </button>
+            <span className="count" role="status">{processing ? busyText : warming ? `Đang tải sẵn AI ${progress}%` : pending ? `${pending} nét đã tô` : ready ? 'AI đã sẵn sàng' : ''}</span>
+            <span className="count">Còn {MAX_REPAIRS - repairs}/{MAX_REPAIRS} lần AI</span>
           </div>
+          <button type="button" className="chip" disabled={!m || processing} onClick={() => change((r) => ({ ...r, erase: [], repairs: [] }))}>
+            Khôi phục vật thể
+          </button>
         </>
       )}
     </>
   )
 }
 
-/* ---------- Dáng: chỉnh tự động và kéo nắn bằng tay ---------- */
+/* ---------- Dáng: thanh kéo theo dáng người, hoặc cọ kéo nắn ---------- */
 
 const BODY: { k: BodyKey; name: string; min: number }[] = [
   { k: 'waist', name: 'Eo thon', min: -100 },
@@ -489,35 +502,107 @@ const BODY: { k: BodyKey; name: string; min: number }[] = [
 export function BodyPanel() {
   const status = useStore((s) => s.body.status)
   const body = useStore((s) => s.recipe.body)
-  const size = useStore((s) => s.pushSize)
   const n = useStore((s) => s.recipe.push.length)
   const ready = status === 'ready'
+  const mode = useStore((s) => s.mode)
+  if (mode === 'manual') return (
+    <>
+      <p className="note">Kéo trên ảnh để nắn. Cọ to cho eo, vai; cọ nhỏ cho chi tiết.</p>
+      <BrushSize />
+      <div className="row-between">
+        <span className="count">{n ? `${n} bước kéo nắn` : 'Chưa kéo nắn'}</span>
+        <button type="button" className="chip" disabled={!n} onClick={() => change((r) => ({ ...r, push: [] }))}>
+          Bỏ hết
+        </button>
+      </div>
+    </>
+  )
   return (
     <>
-      <h2 className="group-title">Chỉnh tự động</h2>
       {status === 'loading' && <p className="note status"><span className="spin" />Đang tải mô hình và tìm dáng người…</p>}
       {status === 'error' && (
         <p className="note status">
-          Chưa tải được mô hình nhận diện dáng. Kéo nắn bằng tay vẫn dùng được.
+          Chưa tải được mô hình nhận diện dáng. {modelHint()}
           <button type="button" className="chip" onClick={() => ensureBody(true)}>Thử lại</button>
         </p>
       )}
-      {status === 'none' && <p className="note">Không thấy rõ vai và hông trong ảnh này nên chưa chỉnh tự động được. Hãy kéo nắn bằng tay ở bên dưới.</p>}
+      {status === 'none' && <p className="note">Không thấy rõ dáng người nên các thanh này chưa dùng được. <button type="button" className="link" onClick={() => setMode('manual')}>Dùng cọ kéo nắn</button></p>}
       {BODY.map((b) => (
         <Band key={b.k} label={b.name} value={body[b.k]} min={b.min} max={100} origin={0} signed={b.min < 0} unit={b.min < 0 ? undefined : '%'} disabled={!ready}
           onLive={(v) => live((r) => ({ ...r, body: { ...r.body, [b.k]: v } }))} onCommit={commit} />
       ))}
-      <h2 className="group-title">Kéo nắn bằng tay</h2>
-      <p className="note">
-        Kéo trên ảnh để nắn vùng trong vòng cọ.
-      </p>
-      <Band label="Cỡ cọ" value={size} min={1} max={100} noReset onLive={setPushSize} onCommit={() => {}} />
-      <div className="row-between">
-        <span className="count">{n ? 'Đã kéo nắn ảnh' : 'Chưa kéo nắn'}</span>
-        <button type="button" className="chip" disabled={!n} onClick={() => change((r) => ({ ...r, push: [] }))}>
-          Bỏ hết nét kéo
-        </button>
+    </>
+  )
+}
+
+/* ---------- Thủ công: cọ tô lên ảnh, mỗi cọ làm việc của một thanh kéo bên Tự động ---------- */
+
+const PAINT_HINTS: Record<PaintKind, string> = {
+  smooth: 'Tô lên vùng da hoặc tóc cần mịn.',
+  blur: 'Tô lên chỗ muốn làm mờ: nền, biển số, người lạ.',
+  light: 'Tô lên chỗ muốn sáng hơn, như gò má, sống mũi.',
+  dark: 'Tô lên chỗ muốn tối đi để tạo khối.',
+  white: 'Tô lên vùng da cần trắng hơn.',
+  lip: 'Tô lên môi. Chọn màu son bên dưới.',
+  blush: 'Tô nhẹ lên gò má. Chọn màu má bên dưới.',
+  vivid: 'Tô lên chỗ cần màu tươi hơn.',
+  mute: 'Tô lên chỗ màu quá gắt.',
+  sharp: 'Tô lên mắt, tóc hoặc chi tiết cần nét hơn.',
+}
+
+export function PaintPanel() {
+  const tab = useStore((s) => s.tab)
+  const chosen = useStore((s) => s.paintTool)
+  const strength = useStore((s) => s.paintStrength)
+  const erasing = useStore((s) => s.paintErase)
+  const showMask = useStore((s) => s.showMask)
+  const shade = useStore((s) => s.recipe.shade)
+  const local = useStore((s) => s.recipe.localBrush)
+  const smoothStrokes = useStore((s) => s.recipe.smoothBrush)
+  const blurStrokes = useStore((s) => s.recipe.blurBrush)
+  const tools = PAINT_TOOLS[tab] ?? []
+  const tool = paintToolFor(tab, chosen)
+  const mine = tool === 'smooth' ? smoothStrokes : tool === 'blur' ? blurStrokes : local.filter((s) => s.k === tool)
+  const count = mine.filter((s) => !s.x).length
+  const used = tool === 'smooth' ? smoothStrokes.length : tool === 'blur' ? blurStrokes.length : local.length
+  const name = PAINT_NAMES[tool].toLowerCase()
+  const clear = () => change((r) => tool === 'smooth' ? { ...r, smoothBrush: [] } : tool === 'blur' ? { ...r, blurBrush: [] }
+    : { ...r, localBrush: r.localBrush.filter((s) => s.k !== tool) })
+  const undoLast = () => change((r) => {
+    if (tool === 'smooth') return { ...r, smoothBrush: r.smoothBrush.slice(0, -1) }
+    if (tool === 'blur') return { ...r, blurBrush: r.blurBrush.slice(0, -1) }
+    const i = r.localBrush.findLastIndex((s) => s.k === tool)
+    return i < 0 ? r : { ...r, localBrush: r.localBrush.filter((_, j) => j !== i) }
+  })
+  return (
+    <>
+      {tools.length > 1 && <div className="chips" role="radiogroup" aria-label="Loại cọ">
+        {tools.map((k) => <button key={k} type="button" role="radio" className="chip" aria-checked={tool === k} aria-pressed={tool === k}
+          onClick={() => setPaintTool(k)}>{PAINT_NAMES[k]}</button>)}
+      </div>}
+      <p className="note">{erasing ? 'Tô lên chỗ muốn xoá nét đã tô.' : PAINT_HINTS[tool]}</p>
+      <div className="chips" role="group" aria-label="Cách tô">
+        <button type="button" className="chip" aria-pressed={!erasing} onClick={() => setPaintErase(false)}>Tô</button>
+        <button type="button" className="chip" aria-pressed={erasing} onClick={() => setPaintErase(true)}>Tẩy</button>
+        <button type="button" className="chip" aria-pressed={showMask} title="Phủ màu hồng lên vùng đã tô của cọ này"
+          onClick={() => setShowMask(!showMask)}>Hiện vùng tô</button>
       </div>
+      <BrushSize />
+      {tool !== 'smooth' && tool !== 'blur' && !erasing && (
+        <Band label="Độ mạnh" value={strength} min={5} max={100} unit="%" noReset onLive={setPaintStrength} onCommit={() => {}} />
+      )}
+      {tool === 'lip' && <Swatches label="Màu son" items={LIP_SHADES} value={shade.lip}
+        onPick={(id) => change((r) => ({ ...r, shade: { ...r.shade, lip: id } }))} />}
+      {tool === 'blush' && <Swatches label="Màu má hồng" items={BLUSH_SHADES} value={shade.blush}
+        onPick={(id) => change((r) => ({ ...r, shade: { ...r.shade, blush: id } }))} />}
+      <div className="row-between">
+        <span className="count">{count ? `${count} nét ${name}` : 'Chưa tô nét nào'}</span>
+        <span className="chips">
+          <button type="button" className="chip" disabled={!mine.length} onClick={undoLast}>Bỏ nét cuối</button>
+          <button type="button" className="chip" disabled={!mine.length} onClick={clear}>Bỏ hết</button>
+        </span>
+      </div>
+      {used > MAX_LOCAL * 0.8 && <p className="note">Còn {MAX_LOCAL - used} nét nữa là hết chỗ.</p>}
     </>
   )
 }

@@ -19,8 +19,9 @@ export function brushMask(srcW: number, srcH: number, strokes: Erase[]): HTMLCan
   const long = Math.max(w, h)
   for (const s of strokes) {
     if (s.pts.length < 2) continue
-    // ba lớp hẹp dần, mỗi lớp trong mờ: giữa nét đậm, mép nhạt
-    for (const [width, alpha] of [[1, 0.3], [0.72, 0.3], [0.45, 0.35]]) {
+    g.strokeStyle = s.x ? '#000' : '#fff'
+    // ba lớp hẹp dần, mỗi lớp trong mờ: giữa nét đậm, mép nhạt; nét tẩy thì xoá hẳn
+    for (const [width, alpha] of s.x ? [[1, 1]] : [[1, 0.3], [0.72, 0.3], [0.45, 0.35]]) {
       g.globalAlpha = alpha
       g.lineWidth = Math.max(1, s.r * long * 2 * width)
       g.beginPath()

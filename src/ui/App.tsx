@@ -1,46 +1,75 @@
 import { useEffect, useRef, useState } from 'react'
 import { describeHistory } from '../engine/history'
-import { freshRecipe, outputSize, type PresetId } from '../engine/recipe'
-import { createRenderer, type Renderer } from '../engine/renderer'
+import { freshRecipe, outputSize, PRESETS, type PresetId } from '../engine/recipe'
+import { createRenderer } from '../engine/renderer'
+import { repairAvailable } from '../services/repair'
 import { exportImage, type ExportFormat } from '../services/image'
 import { exportSizes } from '../engine/exportSize'
 import { canvasPixelLimit, detectPlatform, isPhone } from '../services/save'
 import { isNativeApp } from '../services/native'
+import { PAINT_TOOLS } from '../engine/localBrush'
 import { listDrafts, type DraftSummary } from '../services/draft'
 import {
-  boot, change, dismissToast, flushDraft, getState, jumpTo, openFile, openProject, openSample, redo, removeDraft, runExport, setTab, undo, useStore, type Tab,
+  boot, change, dismissToast, flushDraft, getState, jumpTo, openFile, openProject, openSample, redo, HISTORY_STEPS, removeDraft, resetAll, runExport, setHealTool, setMode, setTab, undo, useStore, type EditMode, type Tab,
 } from '../store'
-import { BodyPanel, ColorMatchPanel, ColorPanel, CropPanel, DetailPanel, HealPanel, PresetPanel, SkinPanel, SunlightPanel, TemplatePanel } from './Panels'
+import { BodyPanel, ColorMatchPanel, PaintPanel, ColorPanel, CropPanel, DetailPanel, HealPanel, PresetPanel, SkinPanel, SunlightPanel, TemplatePanel } from './Panels'
 import { haptic } from './haptic'
 import { nextSheet, SHEET_SWIPE, type Sheet } from './sheet'
 import { Stage } from './Stage'
 import { BackgroundPanel, CollageDialog, CreatePanel, HairPanel } from './CreativePanels'
 
-const GROUPS: { name: string; icon: string; tools: { id: Tab; name: string }[] }[] = [
-  { name: 'Ảnh', icon: 'M5 3v14a2 2 0 0 0 2 2h14M3 5h14a2 2 0 0 1 2 2v14', tools: [{ id: 'crop', name: 'Cắt & xoay' }, { id: 'background', name: 'Nền & mờ' }] },
-  { name: 'Màu', icon: 'M12 3c2 4 6 7 6 12a6 6 0 0 1-12 0c0-5 4-8 6-12ZM9 16a3 3 0 0 0 3 3', tools: [{ id: 'color', name: 'Tinh chỉnh' }, { id: 'preset', name: 'Bộ màu' }, { id: 'colorMatch', name: 'Màu mẫu' }] },
-  { name: 'Chân dung', icon: 'M8 14c1 2 3 3 4 3s3-1 4-3M8 10h.01M16 10h.01M12 21c-4 0-8-4-8-9s3-9 8-9 8 4 8 9-4 9-8 9Z', tools: [{ id: 'skin', name: 'Làm đẹp' }, { id: 'body', name: 'Dáng' }, { id: 'hair', name: 'Tóc' }] },
-  { name: 'Sửa', icon: 'm4 14 9-9a2 2 0 0 1 3 0l3 3a2 2 0 0 1 0 3l-8 8H8l-4-4Zm5-5 7 7m-5 3h9', tools: [{ id: 'heal', name: 'Cọ & AI' }, { id: 'detail', name: 'Chi tiết' }] },
-  { name: 'Sáng tạo', icon: 'M12 3c0 5-4 9-9 9 5 0 9 4 9 9 0-5 4-9 9-9-5 0-9-4-9-9Z', tools: [{ id: 'template', name: 'Mẫu' }, { id: 'create', name: 'Chữ & sticker' }, { id: 'sunlight', name: 'Nắng chiều' }] },
+/** `tone`: màu riêng của nhóm (ô biểu tượng ở cột trái và đầu bảng phải), giúp nhận ra mình đang ở nhóm nào. */
+const GROUPS: { name: string; icon: string; tone: string; tools: { id: Tab; name: string }[] }[] = [
+  { name: 'Ảnh', tone: 'ice', icon: 'M5 3v14a2 2 0 0 0 2 2h14M3 5h14a2 2 0 0 1 2 2v14', tools: [{ id: 'crop', name: 'Cắt & xoay' }, { id: 'background', name: 'Nền & mờ' }] },
+  { name: 'Màu', tone: 'warm', icon: 'M12 3c2 4 6 7 6 12a6 6 0 0 1-12 0c0-5 4-8 6-12ZM9 16a3 3 0 0 0 3 3', tools: [{ id: 'color', name: 'Tinh chỉnh' }, { id: 'preset', name: 'Bộ màu' }, { id: 'colorMatch', name: 'Màu mẫu' }] },
+  { name: 'Chân dung', tone: 'pink', icon: 'M8 14c1 2 3 3 4 3s3-1 4-3M8 10h.01M16 10h.01M12 21c-4 0-8-4-8-9s3-9 8-9 8 4 8 9-4 9-8 9Z', tools: [{ id: 'skin', name: 'Làm đẹp' }, { id: 'body', name: 'Dáng' }, { id: 'hair', name: 'Tóc' }] },
+  { name: 'Sửa', tone: 'violet', icon: 'm4 14 9-9a2 2 0 0 1 3 0l3 3a2 2 0 0 1 0 3l-8 8H8l-4-4Zm5-5 7 7m-5 3h9', tools: [{ id: 'heal', name: 'Xoá' }, { id: 'detail', name: 'Chi tiết' }] },
+  { name: 'Sáng tạo', tone: 'sage', icon: 'M12 3c0 5-4 9-9 9 5 0 9 4 9 9 0-5 4-9 9-9-5 0-9-4-9-9Z', tools: [{ id: 'template', name: 'Mẫu' }, { id: 'create', name: 'Chữ & sticker' }, { id: 'sunlight', name: 'Nắng chiều' }] },
 ]
+
+/**
+ * Hai cách chỉnh. Tự động: kéo thanh ở bảng bên phải, máy tự tìm mặt, dáng, nền để áp.
+ * Thủ công: dùng cọ tô thẳng lên ảnh. Làm đẹp và Dáng có cả hai, người dùng tự chọn; Sửa chỉ có cọ; còn lại là thanh kéo.
+ */
+const MODES: { id: EditMode; name: string; hint: string }[] = [
+  { id: 'auto', name: 'Tự động', hint: 'Kéo thanh, máy tự tìm chỗ để áp.' },
+  { id: 'manual', name: 'Thủ công', hint: 'Tô cọ lên đúng chỗ muốn sửa.' },
+]
+/** Công cụ có cả hai cách: thanh kéo và cọ (xem PAINT_TOOLS); các công cụ đặc thù chỉ có một cách. */
+const DUAL_TABS = ['body', ...Object.keys(PAINT_TOOLS)] as Tab[]
+/** Công cụ đang mở thuộc cách chỉnh nào (để tô màu nhấn): xanh lá nhạt = thanh kéo, xanh băng = cọ. */
+const modeOf = (tab: Tab, mode: EditMode): EditMode => DUAL_TABS.includes(tab) ? mode : tab === 'heal' ? 'manual' : 'auto'
+
+/** Biểu tượng chế độ: thanh trượt cho Tự động, cây cọ cho Thủ công. */
+const MODE_ICON: Record<EditMode, string> = {
+  auto: 'M4 7h9m4 0h3M4 17h3m4 0h9M15 5v4M9 15v4',
+  manual: 'M14 4l6 6-8.5 8.5a3 3 0 0 1-2 .9L5 20l.6-4.5a3 3 0 0 1 .9-2Zm-2 2 6 6',
+}
+function ModeIcon({ mode }: { mode: EditMode }) {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={MODE_ICON[mode]} /></svg>
+}
 
 const PANELS = { crop: CropPanel, color: ColorPanel, preset: PresetPanel, skin: SkinPanel,
   hair: HairPanel, heal: HealPanel, body: BodyPanel, background: BackgroundPanel, create: CreatePanel, detail: DetailPanel, sunlight: SunlightPanel, colorMatch: ColorMatchPanel, template: TemplatePanel }
 
 const EDITOR_ROUTE = '#/editor'
 const HERO_IMAGE = `${import.meta.env.BASE_URL}kulstu-portrait.webp`
-const BRAND_ICON = `${import.meta.env.BASE_URL}kulstu-mark.svg`
-const COLLAGE_ICON = 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Zm8-2v18m0-10h10'
-const LOOKS: { id: PresetId; name: string; filter: string }[] = [
-  { id: 'suong', name: 'Sương', filter: 'brightness(1.09) saturate(.84) contrast(1.04)' },
-  { id: 'nang', name: 'Nắng', filter: 'brightness(1.10) saturate(1.20) sepia(.22)' },
-  { id: 'bac', name: 'Bạc', filter: 'grayscale(1) contrast(1.14)' },
-]
+const BRAND_ICON = `${import.meta.env.BASE_URL}kulstu-glyph.svg`
+const MARK_ICON = `${import.meta.env.BASE_URL}kulstu-mark.svg`
 const isEditorRoute = () => location.hash === EDITOR_ROUTE || (import.meta.env.DEV && location.hash.startsWith('#demo'))
 const goToEditor = () => { location.hash = EDITOR_ROUTE }
 
+/** Công cụ người dùng bấm ở trang chủ trước khi chọn ảnh: mở ảnh xong thì vào thẳng công cụ đó. */
+let nextTool: { tab?: Tab; mode?: EditMode; heal?: 'spot' | 'object' } | null = null
+
 async function importPhoto(file: File) {
-  if (await openFile(file) && !isEditorRoute()) goToEditor()
+  const tool = nextTool
+  nextTool = null
+  if (!await openFile(file)) return
+  if (tool?.mode) setMode(tool.mode)
+  if (tool?.heal) setHealTool(tool.heal)
+  if (tool?.tab) setTab(tool.tab)
+  if (!isEditorRoute()) goToEditor()
 }
 
 function pickFile() {
@@ -53,7 +82,10 @@ function pickFile() {
     input.remove()
     if (f) void importPhoto(f)
   }
-  input.oncancel = () => input.remove()
+  input.oncancel = () => {
+    nextTool = null
+    input.remove()
+  }
   document.body.append(input)
   input.click()
 }
@@ -116,34 +148,81 @@ export function App() {
   )
 }
 
+/** Hàng công cụ dưới băng ảnh: bấm là chọn ảnh rồi vào thẳng công cụ đó. */
+type StartTool = { name: string; icon: string; tone: string; tab?: Tab; mode?: EditMode; heal?: 'spot' | 'object' }
+const START_TOOLS: StartTool[] = [
+  { name: 'Chỉnh màu', tone: 'warm', tab: 'color', mode: 'auto', icon: 'M12 3c2 4 6 7 6 12a6 6 0 0 1-12 0c0-5 4-8 6-12ZM9 16a3 3 0 0 0 3 3' },
+  { name: 'Làm đẹp', tone: 'pink', tab: 'skin', mode: 'auto', icon: 'M8 14c1 2 3 3 4 3s3-1 4-3M8 10h.01M16 10h.01M12 21c-4 0-8-4-8-9s3-9 8-9 8 4 8 9-4 9-8 9Z' },
+  { name: 'Dáng', tone: 'pink', tab: 'body', mode: 'auto', icon: 'M12 4a2 2 0 1 0 0 .01M8 21l2-8-3-3 5-2 5 2-3 3 2 8' },
+  { name: 'Xoá mụn', tone: 'violet', tab: 'heal', heal: 'spot', icon: 'M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 3v3M12 18v3M3 12h3M18 12h3' },
+  ...(repairAvailable ? [{ name: 'Xoá vật thể', tone: 'violet', tab: 'heal' as Tab, heal: 'object' as const, icon: 'm4 14 9-9a2 2 0 0 1 3 0l3 3a2 2 0 0 1 0 3l-8 8H8l-4-4Zm5-5 7 7m-5 3h9' }] : []),
+]
+/** Các ô trong "bảng phấn": mỗi ô là gương mặt mẫu đã áp một bộ màu. */
+const PANS: PresetId[] = ['suong', 'nang', 'dao', 'han', 'phim', 'bac']
+
+/** Trang chủ: ảnh chân dung tràn cao có vạch trước/sau, khối thương hiệu với bảng phấn đổi màu ảnh, hàng công cụ, dự án gần đây. */
 function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: boolean; openCollage: () => void }) {
-  const tools = useRef<HTMLElement>(null)
-  const projectList = useRef<HTMLElement>(null)
   const draftRevision = useStore((s) => s.draftRevision)
   const [projects, setProjects] = useState<DraftSummary[]>([])
-  const [projectError, setProjectError] = useState(false)
-  const portrait = useRef<HTMLImageElement>(null)
-  const comparison = useRef<HTMLCanvasElement>(null)
-  const previewRenderer = useRef<Renderer | null>(null)
-  const renderedPhoto = useRef<HTMLCanvasElement | null>(null)
-  const [split, setSplit] = useState(44)
-  const [adjustedSplit, setAdjustedSplit] = useState(false)
-  const [look, setLook] = useState(LOOKS[1])
   const [opening, setOpening] = useState(false)
-  const [previewReady, setPreviewReady] = useState(false)
+  const [look, setLook] = useState<PresetId>('dao')
+  const [graded, setGraded] = useState<Record<string, string>>({})
+  const [pans, setPans] = useState<Record<string, string>>({})
+  const [split, setSplit] = useState(38)
+  const [touched, setTouched] = useState(false)
 
   useEffect(flushDraft, [])
   useEffect(() => {
     if (!ready) return
     let active = true
-    void listDrafts().then((items) => {
-      if (active) {
-        setProjects(items)
-        setProjectError(false)
-      }
-    }).catch(() => { if (active) setProjectError(true) })
+    void listDrafts().then((items) => { if (active) setProjects(items) }).catch(() => {})
     return () => { active = false }
   }, [ready, draftRevision])
+
+  // dựng sẵn ảnh mẫu theo từng bộ màu bằng chính bộ dựng ảnh của editor: ảnh lớn cho băng ảnh, ô tròn cho bảng phấn
+  useEffect(() => {
+    let active = true
+    const img = new Image()
+    img.src = HERO_IMAGE
+    void img.decode().then(() => {
+      if (!active) return
+      const W = img.naturalWidth
+      const H = img.naturalHeight
+      const big = Math.min(1, 960 / Math.max(W, H))
+      const canvas = document.createElement('canvas')
+      const renderer = createRenderer(canvas, { preserveDrawingBuffer: true })
+      const full = document.createElement('canvas')
+      full.width = Math.round(W * big)
+      full.height = Math.round(H * big)
+      full.getContext('2d')!.drawImage(img, 0, 0, full.width, full.height)
+      // ô phấn: vùng mặt (khoảng giữa, phần trên ảnh)
+      const side = 120
+      const face = document.createElement('canvas')
+      face.width = face.height = side
+      const fs = W * 0.46
+      face.getContext('2d')!.drawImage(img, (W - fs) / 2, H * 0.17, fs, fs, 0, 0, side, side)
+      const bigOut: Record<string, string> = {}
+      const panOut: Record<string, string> = {}
+      renderer.setImage(full, full.width, full.height)
+      for (const id of PANS) {
+        const recipe = freshRecipe()
+        recipe.preset = { id, amt: 90 }
+        renderer.draw(recipe)
+        bigOut[id] = canvas.toDataURL('image/jpeg', 0.86)
+      }
+      renderer.setImage(face, side, side)
+      for (const id of PANS) {
+        const recipe = freshRecipe()
+        recipe.preset = { id, amt: 100 }
+        renderer.draw(recipe)
+        panOut[id] = canvas.toDataURL('image/jpeg', 0.82)
+      }
+      renderer.dispose()
+      setGraded(bigOut)
+      setPans(panOut)
+    }).catch(() => {})
+    return () => { active = false }
+  }, [])
 
   const resumeProject = async (id: string) => {
     setOpening(true)
@@ -154,143 +233,112 @@ function Home({ ready, canResume, openCollage }: { ready: boolean; canResume: bo
     }
   }
 
-  useEffect(() => {
-    const source = portrait.current
-    if (!source) return
-    const rendered = document.createElement('canvas')
-    let active = true
-    void source.decode().then(() => {
-      if (!active) return
-      const renderer = createRenderer(rendered)
-      previewRenderer.current = renderer
-      renderer.setImage(source, source.naturalWidth, source.naturalHeight)
-      renderedPhoto.current = rendered
-      setPreviewReady(true)
-    }).catch(() => {})
-    return () => {
-      active = false
-      previewRenderer.current?.dispose()
-      previewRenderer.current = null
-    }
-  }, [])
-
-  useEffect(() => {
-    const canvas = comparison.current
-    const renderer = previewRenderer.current
-    const rendered = renderedPhoto.current
-    if (!previewReady || !canvas || !renderer || !rendered) return
-    const recipe = freshRecipe()
-    recipe.preset = { id: look.id, amt: 80 }
-    renderer.draw(recipe, { outW: canvas.width, outH: canvas.height })
-    canvas.getContext('2d')!.drawImage(rendered, 0, 0)
-  }, [look, previewReady])
-
-  const openTool = async (tab: Tab) => {
-    if (!getState().src) {
-      setOpening(true)
-      try {
+  const openSamplePhoto = async () => {
+    setOpening(true)
+    try {
+      if (!getState().src?.sample) {
         const result = await fetch(HERO_IMAGE)
         if (!result.ok) throw new Error('sample')
         const blob = await result.blob()
-        if (getState().src) return
         if (!await openFile(new File([blob], 'KulStu — Ảnh mẫu.webp', { type: 'image/webp' }))) return
-        change((r) => ({ ...r, preset: { id: look.id, amt: 80 } }))
-      } catch {
-        if (!getState().src) openSample()
-      } finally {
-        setOpening(false)
       }
+      change((r) => ({ ...r, preset: { id: look, amt: 80 } }))
+    } catch {
+      if (!getState().src) openSample()
+    } finally {
+      setOpening(false)
     }
-    setTab(tab)
+    setTab('preset')
     goToEditor()
   }
 
+  const startTool = (tool: StartTool) => {
+    nextTool = tool
+    pickFile()
+  }
+
+  const busy = !ready || opening
+  const lookName = PRESETS.find((p) => p.id === look)?.name ?? ''
   return (
     <div className="home">
-      <header className="home-bar">
-        <a className="mark brand" href="#/" aria-label="Trang chủ KulStu"><img src={BRAND_ICON} alt="" />KulStu</a>
-        <nav aria-label="Trang chủ">
-          <button type="button" className="home-tools-link" onClick={() => projectList.current?.scrollIntoView({ block: 'start' })}>Dự án</button>
-          <button type="button" className="home-tools-link home-collage-link" aria-haspopup="dialog" onClick={openCollage}>Ghép ảnh</button>
-          <button type="button" className="ghost" disabled={!ready} onClick={canResume ? goToEditor : pickFile}>Mở editor</button>
-        </nav>
+      <header className="bar home-bar">
+        <a className="brand" href="#/" aria-label="Trang chủ KulStu"><img src={BRAND_ICON} alt="" />KulStu</a>
+        <div className="bar-right">
+          <button type="button" className="ghost" aria-haspopup="dialog" disabled={busy} onClick={openCollage}>Ghép ảnh</button>
+          {canResume && <button type="button" className="ghost" disabled={busy} onClick={goToEditor}>Về ảnh đang chỉnh</button>}
+        </div>
       </header>
       <main className="home-main">
-        <section className="welcome" aria-labelledby="home-title">
-          <div className="welcome-body">
-            <h1 id="home-title">Chân dung theo cách bạn thích.</h1>
-            <p className="lede">Lên màu, làm đẹp, xóa vật thể và xuất ảnh 4K.</p>
-            <div className="welcome-actions">
-              <button type="button" className="primary big" disabled={!ready || opening} onClick={canResume ? goToEditor : pickFile}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4" />
-                </svg>
-                {canResume ? 'Tiếp tục chỉnh' : 'Chọn ảnh'}
-              </button>
-              <button type="button" className="ghost big" disabled={!ready || opening} onClick={canResume ? pickFile : () => void openTool('preset')}>
-                {opening ? 'Đang mở…' : canResume ? 'Chọn ảnh khác' : 'Thử ảnh mẫu'}
+        <section className="vanity" aria-labelledby="hero-title">
+          <figure className="mirror" data-intro={!!graded[look] && !touched} style={{ '--home-split': `${split}%` } as React.CSSProperties}>
+            <img src={HERO_IMAGE} alt="Chân dung mẫu trước và sau khi chỉnh" width="960" height="1200" fetchPriority="high" draggable={false} />
+            {graded[look] && <img className="demo-graded" src={graded[look]} alt="" draggable={false} />}
+            <span className="demo-label">Gốc</span><span className="demo-label after">{lookName}</span>
+            <span className="demo-divider" aria-hidden="true" />
+            <input type="range" min={0} max={100} value={split} aria-label="Kéo để so ảnh gốc với ảnh đã chỉnh"
+              onPointerDown={() => setTouched(true)} onFocus={() => setTouched(true)} onChange={(e) => setSplit(+e.currentTarget.value)} />
+          </figure>
+          <div className="brand-panel">
+            <div className="lockup">
+              <img className="brand-mark" src={MARK_ICON} alt="" width="120" height="120" />
+              <h1 id="hero-title">KulStu</h1>
+            </div>
+            <p className="brand-line">Làm đẹp ảnh chân dung ngay trên máy của bạn.</p>
+            <div className="hero-actions">
+              <button type="button" className="primary big" disabled={busy} onClick={pickFile}>Mở ảnh</button>
+              <button type="button" className="link" disabled={busy} onClick={() => void openSamplePhoto()}>
+                {opening ? 'Đang mở…' : 'Thử với ảnh mẫu'}
               </button>
             </div>
-            <p className="home-privacy">Ảnh được chỉnh ngay trên máy và không tải lên đâu cả, trừ khi bạn xoá vật thể bằng AI. <a href={`${import.meta.env.BASE_URL}privacy.html`} target={isNativeApp() ? undefined : "_blank"} rel="noopener">Quyền riêng tư</a></p>
-          </div>
-          <div className="home-photo">
-            <figure className="welcome-demo" data-intro={previewReady && !adjustedSplit}
-              style={{ '--home-split': `${split}%` } as React.CSSProperties}>
-              <img ref={portrait} src={HERO_IMAGE} alt="Chân dung mẫu của KulStu" fetchPriority="high" width="960" height="1200" draggable={false} />
-              {previewReady
-                ? <canvas ref={comparison} className="demo-graded" width={480} height={600} aria-hidden="true" />
-                : <img src={HERO_IMAGE} alt="" className="demo-graded" style={{ filter: look.filter }} width="960" height="1200" draggable={false} />}
-              <span className="demo-label">Gốc</span><span className="demo-label after">{look.name}</span>
-              <span className="demo-divider" aria-hidden="true"><span>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m8 8-4 4 4 4m8-8 4 4-4 4" /></svg>
-              </span></span>
-              <input type="range" min={0} max={100} value={split} aria-label="So sánh ảnh mẫu"
-                onFocus={() => setAdjustedSplit(true)} onPointerDown={() => setAdjustedSplit(true)}
-                onChange={(e) => setSplit(+e.currentTarget.value)} />
-            </figure>
-            <div className="home-looks" role="group" aria-label="Thử bộ màu">
-              {LOOKS.map((item) => <button type="button" key={item.id} aria-pressed={look.id === item.id} onClick={() => {
-                setAdjustedSplit(true)
-                setLook(item)
-              }}>{item.name}</button>)}
+            <p className="palette-hint" id="palette-hint">Bấm một màu để xem trên ảnh bên trái.</p>
+            <div className="palette" role="radiogroup" aria-describedby="palette-hint" aria-label="Bộ màu">
+              {PANS.map((id) => (
+                <button key={id} type="button" role="radio" aria-checked={look === id} className="pan"
+                  onClick={() => { setLook(id); setTouched(true) }}>
+                  {pans[id] ? <img src={pans[id]} alt="" /> : <span className="pan-blank" />}
+                  <span>{PRESETS.find((p) => p.id === id)?.name}</span>
+                </button>
+              ))}
             </div>
           </div>
         </section>
-      <section className="home-tool-list" ref={tools} aria-labelledby="home-tools-title">
-        <h2 id="home-tools-title">Công cụ</h2>
-        <div className="home-tool-grid">
-          {([{ group: GROUPS[1], tab: 'preset', name: 'Bộ màu', detail: 'Lên tông trong một chạm.' },
-            { group: GROUPS[2], tab: 'skin', name: 'Chân dung', detail: 'Da, makeup và nét mặt.' },
-            { group: GROUPS[3], tab: 'heal', name: 'Sửa ảnh', detail: 'Xóa mụn và vật thể AI.' },
-            { group: GROUPS[4], tab: 'template', name: 'Mẫu ảnh', detail: 'Phong cách dựng sẵn, một chạm.' }] as const).map(({ group, tab, name, detail }) => (
-            <button className="home-tool" type="button" key={tab} disabled={!ready || opening} onClick={() => void openTool(tab)}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={group.icon} /></svg>
-              <span><strong>{name}</strong><small>{detail}</small></span>
+
+        <nav className="tool-strip" aria-label="Mở ảnh vào công cụ">
+          {START_TOOLS.map((tool) => (
+            <button key={tool.name} type="button" data-tone={tool.tone} disabled={busy} onClick={() => startTool(tool)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={tool.icon} /></svg>
+              {tool.name}
             </button>
           ))}
-        </div>
-      </section>
-      <section className="home-tool-list home-projects" ref={projectList} aria-labelledby="home-projects-title">
-        <h2 id="home-projects-title">Dự án gần đây</h2>
-        {projectError ? <p className="note">Chưa đọc được dự án trên trình duyệt này.</p>
-          : projects.length ? <ul>
-            {projects.map((project) => (
-              <li key={project.id}>
+        </nav>
+
+        {projects.length > 0 && <section className="recent" aria-labelledby="recent-title">
+          <h2 id="recent-title">Dự án gần đây</h2>
+          <ul>
+            {projects.slice(0, 12).map((project) => (
+              <li key={project.id} className="project">
                 <button className="project-row" type="button" disabled={opening} onClick={() => void resumeProject(project.id)}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-                    <rect x="3" y="4" width="18" height="16" rx="3" /><path d="m4 17 5-5 3 3 4-5 5 7" />
-                  </svg>
-                  <span><strong>{project.sample ? 'Ảnh mẫu KulStu' : project.name}</strong>
-                    <small>{new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }).format(project.savedAt)}</small>
-                  </span>
-                  <span className="project-open">Mở</span>
+                  {project.thumb ? <img src={project.thumb} alt="" /> : <span className="pan-blank" aria-hidden="true" />}
+                  <strong>{project.sample ? 'Ảnh mẫu KulStu' : project.name}</strong>
+                </button>
+                <button type="button" className="icon-btn project-delete" aria-label={`Xoá dự án ${project.name}`} title="Xoá dự án"
+                  disabled={opening} onClick={async () => {
+                    await removeDraft(project.id)
+                    setProjects((items) => items.filter((item) => item.id !== project.id))
+                  }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg>
                 </button>
               </li>
             ))}
-          </ul> : <p className="note">{ready ? 'Ảnh đã lưu trên trình duyệt này sẽ hiện ở đây.' : 'Đang mở danh sách…'}</p>}
-      </section>
+          </ul>
+          <p className="note">Dự án nằm trong trình duyệt này. Xoá dữ liệu trình duyệt là mất.</p>
+        </section>}
+
+        <footer className="home-foot">
+          Ảnh xử lý ngay trên máy, không tải lên đâu, trừ khi dùng xoá vật thể AI.{' '}
+          <a href={`${import.meta.env.BASE_URL}privacy.html`} target={isNativeApp() ? undefined : '_blank'} rel="noopener">Quyền riêng tư</a>
+        </footer>
       </main>
-      <footer className="home-footer"><span className="mark brand"><img src={BRAND_ICON} alt="" />KulStu</span></footer>
     </div>
   )
 }
@@ -310,50 +358,74 @@ function Editor({ openCollage }: { openCollage: () => void }) {
   const fileDlg = useRef<HTMLDialogElement>(null)
   const exportDlg = useRef<HTMLDialogElement>(null)
   const historyDlg = useRef<HTMLDialogElement>(null)
+  const mode = useStore((s) => s.mode)
   const group = GROUPS.find((g) => g.tools.some((tool) => tool.id === tab)) ?? GROUPS[1]
-  const Panel = PANELS[tab] ?? ColorPanel
+  const dual = DUAL_TABS.includes(tab)
+  const Panel = dual && mode === 'manual' && PAINT_TOOLS[tab] ? PaintPanel : PANELS[tab] ?? ColorPanel
+  const shown = modeOf(tab, mode)
+  const openExport = () => {
+    if (getState().exporting) return
+    exportDlg.current?.showModal()
+    setExportOpen(true)
+  }
+  // Ctrl+S / Ctrl+E: mở hộp xuất ảnh như phần mềm chỉnh ảnh trên máy tính
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const k = e.key.toLowerCase()
+      if (k !== 's' && k !== 'e') return
+      e.preventDefault()
+      if (!document.querySelector('dialog[open]')) openExport()
+    }
+    addEventListener('keydown', key)
+    return () => removeEventListener('keydown', key)
+  })
 
   return (
     <>
-      <header className="bar">
-        <a className="mark brand" href="#/" aria-label="Về trang chủ KulStu" title="Trang chủ"><img src={BRAND_ICON} alt="" />KulStu</a>
-        <span className="document-name">{name && !/^[a-f0-9]{16,}$/i.test(name) ? name : 'Ảnh đang chỉnh'}</span>
-        <button type="button" className="icon-btn" aria-label="Hoàn tác" title="Hoàn tác (Ctrl+Z)" disabled={!canUndo} onClick={undo}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></svg>
-        </button>
-        <button type="button" className="icon-btn" aria-label="Làm lại" title="Làm lại (Ctrl+Shift+Z)" disabled={!canRedo} onClick={redo}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></svg>
-        </button>
-        <button type="button" className="icon-btn" aria-label="Lịch sử chỉnh sửa" title="Lịch sử chỉnh sửa" disabled={!canUndo && !canRedo}
-          onClick={() => historyDlg.current?.showModal()}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 3" /></svg>
-        </button>
-        <button type="button" className={'ghost icon-label' + (draft === 'failed' ? ' warn' : '')} aria-label="Đổi ảnh" onClick={() => fileDlg.current?.showModal()}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m4 17 5-5 3 3 4-5 5 7" /></svg>
-          <span className="btn-label">Đổi ảnh</span>
-        </button>
-        <button type="button" className="primary" disabled={exporting} onClick={() => {
-          exportDlg.current?.showModal()
-          setExportOpen(true)
-        }}>
-          {exporting ? 'Đang xuất…' : 'Xuất ảnh'}
-        </button>
+      <header className="bar editor-bar">
+        <div className="bar-left">
+          <a className="brand" href="#/" aria-label="Về trang chủ KulStu" title="Trang chủ"><img src={BRAND_ICON} alt="" />KulStu</a>
+          <button type="button" className={'document-name' + (draft === 'failed' ? ' warn' : '')} title="Thông tin ảnh và bản nháp"
+            onClick={() => fileDlg.current?.showModal()}>
+            {name && !/^[a-f0-9]{16,}$/i.test(name) ? name : 'Ảnh đang chỉnh'}
+            {draft === 'failed' && <span className="draft-warn">chưa lưu được</span>}
+          </button>
+        </div>
+        <div className="bar-mid" role="group" aria-label="Lịch sử">
+          <button type="button" className="icon-btn" aria-label="Hoàn tác" title="Hoàn tác (Ctrl+Z)" disabled={!canUndo} onClick={undo}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></svg>
+          </button>
+          <button type="button" className="icon-btn" aria-label="Làm lại" title="Làm lại (Ctrl+Shift+Z)" disabled={!canRedo} onClick={redo}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></svg>
+          </button>
+          <button type="button" className="icon-btn" aria-label="Lịch sử chỉnh sửa" title="Lịch sử chỉnh sửa"
+            onClick={() => historyDlg.current?.showModal()}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 3" /></svg>
+          </button>
+        </div>
+        <div className="bar-right">
+          <button type="button" className="ghost" aria-haspopup="dialog" onClick={openCollage}>Ghép ảnh</button>
+          <button type="button" className="ghost" onClick={pickFile}>Mở ảnh khác</button>
+          <button type="button" className="icon-btn narrow-only" aria-label="Mở ảnh khác" title="Mở ảnh khác" onClick={pickFile}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m4 17 5-5 3 3 4-5 5 7" /><circle cx="8.5" cy="9" r="1.5" /></svg>
+          </button>
+          <button type="button" className="primary" disabled={exporting} title="Xuất ảnh (Ctrl+S)" onClick={openExport}>
+            {exporting ? 'Đang xuất…' : 'Xuất ảnh'}
+          </button>
+        </div>
       </header>
 
-      <main className="editor">
+      <main className="editor" data-mode={shown}>
         <nav className="tool-dock" aria-label="Nhóm công cụ">
-          {GROUPS.map((g) => <button key={g.name} type="button" className="dock-tool" aria-pressed={g === group}
+          {GROUPS.map((g) => <button key={g.name} type="button" className="dock-tool" data-tone={g.tone} aria-pressed={g === group}
             aria-controls="tool-panel" onClick={() => {
               if (g !== group) setTab(g.tools[0].id)
               if (collapsed) setSheet('normal')
             }}>
-            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={g.icon} /></svg>
+            <span className="tone-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={g.icon} /></svg></span>
             <span>{g.name}</span>
           </button>)}
-          <button type="button" className="dock-tool" aria-haspopup="dialog" onClick={openCollage}>
-            <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={COLLAGE_ICON} /></svg>
-            <span>Ghép ảnh</span>
-          </button>
         </nav>
         <Stage />
         <aside className="tools" data-collapsed={collapsed} data-sheet={sheet} data-subtools={group.tools.length > 1} aria-label="Thông số công cụ">
@@ -376,8 +448,8 @@ function Editor({ openCollage }: { openCollage: () => void }) {
               setSheet((current) => nextSheet(current, e.key === 'ArrowUp' ? -SHEET_SWIPE : SHEET_SWIPE))
             }}
             onClick={(e) => { if (e.detail === 0) setSheet((current) => nextSheet(current, 0)) }} />
-          <div className="tool-heading">
-            <h2>{group.name}</h2>
+          <div className="tool-heading" data-tone={group.tone}>
+            <h2><span className="tone-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={group.icon} /></svg></span>{group.name}</h2>
             <button type="button" className="icon-btn tool-collapse" aria-controls="tool-panel" aria-expanded={!collapsed}
               aria-label={collapsed ? 'Mở bảng chỉnh' : 'Thu gọn bảng chỉnh'} onClick={() => setSheet(collapsed ? 'normal' : 'collapsed')}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d={collapsed ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6'} /></svg>
@@ -387,12 +459,25 @@ function Editor({ openCollage }: { openCollage: () => void }) {
             {group.tools.length > 1 && <div className="tool-options" role="group" aria-label={group.name}>
               {group.tools.map((tool) => <button key={tool.id} type="button" aria-pressed={tab === tool.id} onClick={() => setTab(tool.id)}>{tool.name}</button>)}
             </div>}
-            <div className="panel" key={tab}><Panel /></div>
+            <div className="mode-box">
+              <div className="mode-switch" role="radiogroup" aria-label="Cách chỉnh">
+                {MODES.map((m) => {
+                  const available = dual || m.id === shown
+                  return <button key={m.id} type="button" role="radio" aria-checked={shown === m.id} data-mode={m.id}
+                    disabled={!available} title={m.hint} onClick={() => setMode(m.id)}><ModeIcon mode={m.id} />{m.name}</button>
+                })}
+              </div>
+              <p className="mode-note">
+                {dual ? MODES.find((m) => m.id === mode)!.hint
+                  : shown === 'manual' ? 'Công cụ này chỉ dùng cọ.' : 'Công cụ này không có cọ.'}
+              </p>
+            </div>
+            <div className="panel" key={dual ? `${tab}-${mode}` : tab}><Panel /></div>
           </div>
+          <Coach />
         </aside>
       </main>
 
-      <Coach />
       <FileDialog ref={fileDlg} />
       <HistoryDialog ref={historyDlg} />
       <ExportDialog ref={exportDlg} open={exportOpen} onClose={() => setExportOpen(false)} />
@@ -401,10 +486,11 @@ function Editor({ openCollage }: { openCollage: () => void }) {
 }
 
 const COACH_KEY = 'kulstu.coach.v1'
+const SHORTCUTS: [string, string][] = [['[ ]', 'Đổi cỡ cọ'], ['\\', 'Xem ảnh gốc'], ['Phím cách', 'Giữ để kéo ảnh'], ['Ctrl Z', 'Hoàn tác'], ['Ctrl S', 'Xuất ảnh']]
 const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 const COACH_TIPS = touch
   ? ['Chụm hai ngón để phóng to ảnh, chạm đúp để về vừa khung.', 'Giữ nút “Ảnh gốc” dưới ảnh để so với lúc chưa chỉnh.', 'Vuốt thanh nhỏ trên bảng chỉnh lên để mở rộng, xuống để thu gọn.']
-  : ['Cuộn chuột để phóng to, kéo để dời ảnh, chạm đúp để về vừa khung.', 'Giữ nút “Ảnh gốc” dưới ảnh để so với lúc chưa chỉnh.', 'Ctrl+Z để hoàn tác. Nút đồng hồ trên cùng mở lịch sử chỉnh sửa.']
+  : ['']
 
 /** Gợi ý ngắn ở lần đầu mở editor; đã xem hoặc bỏ qua thì không hiện lại. */
 function Coach() {
@@ -423,7 +509,14 @@ function Coach() {
   const last = step === COACH_TIPS.length - 1
   return (
     <div className="coach" role="dialog" aria-label="Gợi ý sử dụng" aria-live="polite">
-      <p><span className="coach-step">{step + 1}/{COACH_TIPS.length}</span>{COACH_TIPS[step]}</p>
+      {touch
+        ? <p>{COACH_TIPS.length > 1 && <span className="coach-step">{step + 1}/{COACH_TIPS.length}</span>}{COACH_TIPS[step]}</p>
+        : <>
+          <p className="coach-title">Phím tắt</p>
+          <dl className="keys">
+            {SHORTCUTS.map(([key, what]) => <div key={key}><dt><kbd>{key}</kbd></dt><dd>{what}</dd></div>)}
+          </dl>
+        </>}
       <div className="coach-actions">
         {!last && <button type="button" className="link" onClick={done}>Bỏ qua</button>}
         <button type="button" className="primary" onClick={() => (last ? done() : setStep(step + 1))}>{last ? 'Đã hiểu' : 'Tiếp'}</button>
@@ -438,7 +531,7 @@ function FileDialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> })
   const close = () => ref.current?.close()
   return (
     <dialog ref={ref} aria-labelledby="fileTitle" onClick={(e) => e.target === ref.current && close()}>
-      <h2 id="fileTitle">Ảnh đang chỉnh</h2>
+      <h2 id="fileTitle">Thông tin ảnh</h2>
       <dl className="facts">
         <dt>Tên</dt>
         <dd>{src.sample ? 'Ảnh mẫu của KulStu' : src.name}</dd>
@@ -446,9 +539,9 @@ function FileDialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null> })
         <dd>{src.w} × {src.h} px</dd>
         <dt>Bản nháp</dt>
         <dd className={draft === 'failed' ? 'bad' : ''}>
-          {draft === 'saved' && 'Đã lưu trong trình duyệt này. Mở lại trang sẽ tiếp tục từ đây.'}
+          {draft === 'saved' && 'Đã lưu nháp trong trình duyệt. Mở lại trang là chỉnh tiếp được.'}
           {draft === 'none' && 'Chưa có. Bản nháp tự lưu khi bạn chỉnh ảnh.'}
-          {draft === 'failed' && 'Thay đổi mới chưa được lưu vì bộ nhớ trình duyệt đầy hoặc bị chặn. Hãy xuất ảnh trước khi đóng trang.'}
+          {draft === 'failed' && 'Chưa lưu được nháp (trình duyệt hết chỗ hoặc đang chặn). Nhớ xuất ảnh trước khi đóng trang.'}
           {draft !== 'none' && (
             <button type="button" className="link danger" onClick={() => void removeDraft()}>Xoá bản nháp</button>
           )}
@@ -471,7 +564,7 @@ function HistoryDialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null>
   return (
     <dialog ref={ref} aria-labelledby="historyTitle" className="history-dialog" onClick={(e) => e.target === ref.current && close()}>
       <h2 id="historyTitle">Lịch sử</h2>
-      <p className="note">Chạm vào một bước để quay về đó. Các bước sau vẫn còn cho tới khi bạn chỉnh tiếp.</p>
+      <p className="note">Bấm một bước để quay lại đó. Giữ {HISTORY_STEPS} bước gần nhất.</p>
       <ol className="history-list" reversed>
         {names.map((name, i) => ({ name, i })).reverse().map(({ name, i }) => (
           <li key={i}>
@@ -485,6 +578,8 @@ function HistoryDialog({ ref }: { ref: React.RefObject<HTMLDialogElement | null>
         ))}
       </ol>
       <div className="dlg-actions">
+        <button type="button" className="ghost warn" onClick={() => { resetAll(); close() }}
+          title="Bỏ mọi chỉnh sửa, đưa ảnh về như lúc mở. Vẫn hoàn tác được.">Đặt lại tất cả</button>
         <span className="grow" />
         <button type="button" className="ghost" autoFocus onClick={close}>Đóng</button>
       </div>
@@ -502,7 +597,7 @@ function ExportPreview() {
     const bitmap = src.preview
     const source = { ...src, bitmap, w: bitmap.width, h: bitmap.height }
     const size = outputSize(recipe.geo, source.w, source.h)
-    const scale = Math.min(1, 360 / Math.max(size.w, size.h))
+    const scale = Math.min(1, 900 / Math.max(size.w, size.h))
     void exportImage(source, recipe, face.mask, face.features, body.data, 'png', scale,
       cutout.result?.mask ?? null, hairRegion.result).then((blob) => {
       if (!active) return
@@ -531,12 +626,12 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
   const size = sizes.find((s) => s.id === sizeId) ?? sizes[0]
   const close = () => ref.current?.close()
   return (
-    <dialog ref={ref} aria-labelledby="exportTitle" onClose={onClose} onClick={(e) => e.target === ref.current && !exporting && close()} onCancel={(e) => exporting && e.preventDefault()}>
+    <dialog ref={ref} aria-labelledby="exportTitle" className="export-dialog" onClose={onClose} onClick={(e) => e.target === ref.current && !exporting && close()} onCancel={(e) => exporting && e.preventDefault()}>
       <h2 id="exportTitle">Xuất ảnh</h2>
       {open && <ExportPreview />}
       <fieldset className="seg">
         <legend>Định dạng</legend>
-        {([['jpeg', 'JPEG', transparent ? 'Nền trắng' : 'Tệp nhẹ'], ['png', 'PNG', 'Giữ trong suốt']] as const).map(([id, name, hint]) => (
+        {([['jpeg', 'JPEG', transparent ? 'Nền trắng' : 'Mở được ở mọi nơi'], ['png', 'PNG', 'Giữ trong suốt'], ['webp', 'WebP', 'Nhẹ nhất, giữ trong suốt']] as const).map(([id, name, hint]) => (
           <label key={id}>
             <input type="radio" name="fmt" checked={fmt === id} onChange={() => setFmt(id)} />
             <span>{name}<small>{hint}</small></span>
@@ -554,11 +649,12 @@ function ExportDialog({ ref, open, onClose }: { ref: React.RefObject<HTMLDialogE
       </fieldset>
       {size.capped && <p className="note">iPhone này vẽ tối đa {Math.round(canvasPixelLimit() / 1e6)} triệu điểm ảnh mỗi ảnh nên ảnh được thu nhỏ còn {size.w} × {size.h}. Cập nhật iOS 18 để xuất lớn hơn.</p>}
       {size.upscale && <p className="note">Ảnh gốc nhỏ hơn {size.name} nên sẽ được phóng to; chi tiết không nét thêm.</p>}
-      {fmt === 'jpeg' && <label className="collage-files">
-        Chất lượng JPEG {quality}%
-        <input type="range" aria-label="Chất lượng JPEG" min={30} max={100} value={quality} disabled={exporting}
+      {fmt !== 'png' && <label className="collage-files">
+        Chất lượng {fmt === 'webp' ? 'WebP' : 'JPEG'} {quality}%
+        <input type="range" aria-label="Chất lượng ảnh" min={30} max={100} value={quality} disabled={exporting}
           onChange={(event) => setQuality(Number(event.currentTarget.value))} />
       </label>}
+      <p className="note">Ảnh xuất không kèm vị trí, máy chụp hay ngày giờ.</p>
       {platform === 'ios' && <p className="note">Bảng chia sẻ sẽ mở ra, chọn “Lưu hình ảnh” để đưa ảnh vào app Ảnh.</p>}
       <div className="dlg-actions">
         <span className="grow" />

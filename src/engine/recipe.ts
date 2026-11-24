@@ -1,3 +1,4 @@
+import type { LocalStroke } from './localBrush'
 import type { Erase } from './erase'
 import type { Push } from './liquify'
 import type { ColorMatch } from './colorMatch'
@@ -105,6 +106,8 @@ export type Recipe = {
   /** Các nét của cọ làm mịn. */
   smoothBrush: Erase[]
   blurBrush: Erase[]
+  /** Các nét của cọ chỉnh vùng (làm sáng, tô son…), chế độ Thủ công. */
+  localBrush: LocalStroke[]
   backgroundBlur: number
   geo: Geo
 }
@@ -135,6 +138,7 @@ export const freshRecipe = (): Recipe => ({
   erase: [],
   smoothBrush: [],
   blurBrush: [],
+  localBrush: [],
   backgroundBlur: 0,
   geo: { ratio: 'orig', rot: 0, fx: false, fy: false, rect: { x: 0, y: 0, w: 1, h: 1 } },
 })
@@ -298,7 +302,8 @@ export function normalizeRecipe(r: Recipe): Recipe {
     shade: { ...f.shade, ...r.shade }, beauty: { ...f.beauty, ...r.beauty }, template: r.template ?? null,
     shape: { ...f.shape, ...r.shape }, hair: { smooth: r.hair?.smooth ?? 0 }, body: { ...f.body, ...r.body },
     push: Array.isArray(r.push) ? r.push : [], erase: Array.isArray(r.erase) ? r.erase : [],
-    smoothBrush: Array.isArray(r.smoothBrush) ? r.smoothBrush : [], decorations: Array.isArray(r.decorations) ? r.decorations : [],
+    smoothBrush: Array.isArray(r.smoothBrush) ? r.smoothBrush : [], blurBrush: Array.isArray(r.blurBrush) ? r.blurBrush : [],
+    localBrush: Array.isArray(r.localBrush) ? r.localBrush : [], decorations: Array.isArray(r.decorations) ? r.decorations : [],
     repairs: Array.isArray(r.repairs) ? r.repairs : [],
   }
 }
