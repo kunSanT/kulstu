@@ -24,6 +24,8 @@ uniform sampler2D hairMask; uniform float hairSmooth;
 uniform float sunlight; uniform vec4 colorMatch; uniform float matchAmount;
 uniform vec4 sunRay; uniform vec2 sunAspect;
 uniform sampler2D blurMask; uniform float backgroundBlur;
+uniform sampler2D locA; uniform sampler2D locB; uniform sampler2D locC; uniform bool hasLocal;
+uniform int ovlTex; uniform int ovlCh;
 uniform vec4 wc[${WARP_COUNT}]; uniform vec2 wk[${WARP_COUNT}]; uniform vec2 wax[${WARP_COUNT}]; uniform vec2 asp;
 uniform vec2 legO; uniform vec2 legV; uniform float legL; uniform float legK;
 uniform float split; uniform int orig; uniform float lod;
@@ -168,6 +170,29 @@ void main(){
       float shadow = coverage.b*makeup.z*smoothstep(.04,.3,y);
       c = tintMakeup(c, vec3(.055,-.029,.036), shadow);
     }
+    if(hasLocal){
+      // cọ chỉnh vùng (chế độ Thủ công): mỗi kênh là một loại cọ, làm đúng việc của thanh kéo tương ứng
+      vec3 la = texture(locA,s).rgb; vec3 lb = texture(locB,s).rgb; vec3 lc = texture(locC,s).rgb;
+      if(la.r+la.g>.003) c = pow(max(c,0.), vec3(exp2(-(la.r-la.g)*.9)));
+      if(la.b>.003){
+        c = pow(max(c,0.), vec3(1./(1.+.55*la.b)));
+        c = mix(c, vec3(luma(c)), .14*la.b);
+      }
+      float y0 = luma(base.rgb);
+      if(lb.r>.003){
+        float lip = lb.r*.85*smoothstep(.025,.14,y0);
+        c = tintMakeup(c, lipTint.rgb, lip);
+        c *= 1.-lipTint.a*min(1.,lip*2.);
+      }
+      if(lb.g>.003) c = tintMakeup(c, blushTint, lb.g*.55*smoothstep(.03,.25,y0));
+      if(lb.b+lc.r>.003){ float l = luma(c); c = clamp(mix(vec3(l), c, 1.+lb.b*.7-lc.r*.85),0.,1.); }
+      if(lc.g>.003){
+        vec2 d = max(rad*.65, exp2(lod)/vec2(textureSize(img, 0)));
+        vec3 around = .25*(textureLod(img,s+vec2(d.x,0.),lod).rgb + textureLod(img,s-vec2(d.x,0.),lod).rgb
+          + textureLod(img,s+vec2(0.,d.y),lod).rgb + textureLod(img,s-vec2(0.,d.y),lod).rgb);
+        c = clamp(c + clamp(luma(base.rgb)-luma(around),-.15,.15)*lc.g*1.2,0.,1.);
+      }
+    }
     if(hairSmooth>0.){
       float coverage = smoothstep(.34,.86,texture(hairMask,s).r);
       if(coverage>.001){
@@ -243,6 +268,13 @@ void main(){
       c += mix(c,1.-c,step(0.,gain))*gain*.6;
     }
     c *= 1.-vignette*.46*smoothstep(.26,.71,length(uv-.5));
+    if(ovlTex>=0){
+      // hiện vùng đã tô của cọ đang chọn: phủ đỏ hồng trong mờ, như mặt nạ trong phần mềm chỉnh ảnh
+      vec3 mk = ovlTex==0 ? texture(bmask,s).rgb : ovlTex==1 ? texture(blurMask,s).rgb
+        : ovlTex==2 ? texture(locA,s).rgb : ovlTex==3 ? texture(locB,s).rgb : texture(locC,s).rgb;
+      float v = clamp(ovlCh==0 ? mk.r : ovlCh==1 ? mk.g : mk.b, 0., 1.);
+      c = mix(c, vec3(1.,.28,.38), v*.55);
+    }
   }
   float alpha = base.a;
   if(!showOriginal && replaceBackground){
@@ -262,6 +294,8 @@ export type DrawOptions = {
   orig?: boolean
   /** Vị trí thanh chia đôi 0–1, hoặc bỏ trống. */
   split?: number
+  /** Tô màu vùng đã tô của một loại cọ: [texture, kênh] (xem maskSlot). Chỉ dùng khi xem, không khi xuất. */
+  overlay?: [number, number]
 }
 
 export type Renderer = ReturnType<typeof createRenderer>
@@ -337,6 +371,13 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
   const sculptTex = makeTex(9)
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4))
   gl.uniform1i(U('sculptMask'), 9)
+  const localTex = [10, 11, 12].map((unit, i) => {
+    const t = makeTex(unit)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4))
+    gl.uniform1i(U(['locA', 'locB', 'locC'][i]), unit)
+    return t
+  })
+  let hasLocal = false
 
   let tw = 1
   let th = 1
@@ -421,6 +462,16 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
       if (mask) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mask)
       else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4))
     },
+    /** Ba mặt nạ của cọ chỉnh vùng (xem localBrush.ts); null = chưa tô gì. */
+    setLocalMasks(masks: HTMLCanvasElement[] | null) {
+      hasLocal = !!masks
+      if (!masks) return
+      masks.forEach((m, i) => {
+        gl.activeTexture(gl.TEXTURE10 + i)
+        gl.bindTexture(gl.TEXTURE_2D, localTex[i])
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, m)
+      })
+    },
     /** Trường dịch chuyển của công cụ kéo nắn; null = không nắn. */
     setField(f: Field | null) {
       gl.activeTexture(gl.TEXTURE3)
@@ -497,6 +548,9 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
       gl.uniform1f(U('backgroundBlur'), hasPerson && st.background === 'original' ? st.backgroundBlur / 100 : 0)
       gl.uniform4f(U('background'), ((rgb >> 16) & 255) / 255, ((rgb >> 8) & 255) / 255, (rgb & 255) / 255, +replacement)
       gl.uniform1f(U('hairSmooth'), hair ? st.hair.smooth / 100 : 0)
+      gl.uniform1i(U('hasLocal'), +hasLocal)
+      gl.uniform1i(U('ovlTex'), o.overlay?.[0] ?? -1)
+      gl.uniform1i(U('ovlCh'), o.overlay?.[1] ?? 0)
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
@@ -512,6 +566,7 @@ export function createRenderer(canvas: HTMLCanvasElement, attrs: WebGLContextAtt
       gl.deleteTexture(hairTex)
       gl.deleteTexture(blurTex)
       gl.deleteTexture(sculptTex)
+      localTex.forEach((t) => gl.deleteTexture(t))
       gl.getExtension('WEBGL_lose_context')?.loseContext()
     },
   }

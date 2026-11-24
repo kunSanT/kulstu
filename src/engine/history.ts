@@ -1,5 +1,6 @@
 // Đặt tên cho từng bước trong lịch sử chỉnh sửa, bằng cách so hai công thức liền nhau.
 import type { AdjKey, Recipe } from './recipe'
+import { PAINT_NAMES } from './localBrush'
 
 const ADJ: Record<AdjKey, string> = {
   b: 'Độ sáng', c: 'Tương phản', s: 'Bão hoà', t: 'Nhiệt độ màu', shadows: 'Vùng tối', highlights: 'Vùng sáng',
@@ -27,6 +28,10 @@ export function describeStep(prev: Recipe | undefined, next: Recipe): string {
     return next.erase.length + next.repairs.length > prev.erase.length + prev.repairs.length ? 'Xoá vật thể' : 'Hoàn lại vật thể'
   if (prev.smoothBrush.length !== next.smoothBrush.length) return 'Cọ làm mịn'
   if (prev.blurBrush.length !== next.blurBrush.length) return 'Cọ làm mờ'
+  if (prev.localBrush.length !== next.localBrush.length) {
+    const last = next.localBrush.at(-1)
+    return next.localBrush.length > prev.localBrush.length && last ? `Cọ ${PAINT_NAMES[last.k].toLowerCase()}` : 'Bỏ nét cọ'
+  }
   if (prev.push.length !== next.push.length) return 'Kéo nắn'
   if (prev.smooth !== next.smooth) return 'Làm mịn da'
   if (prev.white !== next.white) return 'Làm trắng da'

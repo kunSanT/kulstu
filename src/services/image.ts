@@ -4,6 +4,7 @@ import { outputSize, type Body, type Features, type Recipe } from '../engine/rec
 import { applyErases } from '../engine/erase'
 import { applySpots } from '../engine/heal'
 import { brushMask } from '../engine/smoothBrush'
+import { localMasks } from '../engine/localBrush'
 import { drawDecorations } from '../engine/decorations'
 import { drawRepairs } from './repair'
 import type { Segment } from './segment'
@@ -42,8 +43,8 @@ export async function decodeFile(f: Blob, fileName: string, previewLong = PREVIE
   } catch {
     throw new ImportError(
       heic
-        ? 'Trình duyệt này chưa mở được ảnh HEIC. Hãy chọn bản JPEG hoặc PNG của ảnh.'
-        : 'Không mở được tệp này. Tệp có thể bị hỏng hoặc không phải ảnh JPEG, PNG, WebP.',
+        ? 'Trình duyệt này chưa mở được ảnh HEIC. Chọn bản JPEG hoặc PNG nhé.'
+        : 'Không mở được tệp này. Có thể tệp bị hỏng hoặc không phải ảnh.',
     )
   }
   if (bmp.width * bmp.height > MAX_PIXELS) {
@@ -105,7 +106,14 @@ export function releaseSource(s: Source | null) {
   if (s && 'close' in s.bitmap) s.bitmap.close()
 }
 
-export type ExportFormat = 'jpeg' | 'png'
+export type ExportFormat = 'jpeg' | 'png' | 'webp'
+
+/** Trình duyệt không xuất được định dạng này (thường là WebP trên Safari cũ). */
+export class ExportFormatError extends Error {
+  constructor(fmt: ExportFormat) {
+    super(`Trình duyệt này chưa xuất được ${fmt.toUpperCase()}. Chọn JPEG hoặc PNG nhé.`)
+  }
+}
 
 /** Dựng ảnh ở độ phân giải xuất. Buffer lớn chỉ tồn tại trong lúc hàm này chạy. */
 export async function exportImage(
@@ -153,6 +161,7 @@ export async function exportImage(
     r.setFeatures(features, body)
     if (recipe.smoothBrush.length) r.setBrushMask(brushMask(src.w, src.h, recipe.smoothBrush))
     if (recipe.blurBrush.length) r.setBlurMask(brushMask(src.w, src.h, recipe.blurBrush))
+    r.setLocalMasks(localMasks(src.w, src.h, recipe.localBrush))
     if (recipe.push.length) {
       const field = makeField(src.w, src.h)
       applyPushes(field, recipe.push)
@@ -176,8 +185,11 @@ export async function exportImage(
       g.drawImage(c, 0, 0)
       drawDecorations(out, recipe.decorations)
     }
-    const blob = await new Promise<Blob | null>((res) => out.toBlob(res, fmt === 'png' ? 'image/png' : 'image/jpeg', quality))
+    const mime = `image/${fmt}`
+    const blob = await new Promise<Blob | null>((res) => out.toBlob(res, mime, quality))
     if (!blob) throw new Error('toBlob')
+    // trình duyệt không mã hoá được WebP thì lặng lẽ trả PNG: báo rõ thay vì lưu sai đuôi
+    if (blob.type !== mime) throw new ExportFormatError(fmt)
     return blob
   } finally {
     r.dispose()

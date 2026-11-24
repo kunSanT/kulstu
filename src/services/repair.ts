@@ -26,15 +26,15 @@ export const RUN_TIMEOUT = 300_000
 export const STALL_TIMEOUT = 60_000
 
 export const repairMessages: Record<Extract<RepairReply, { type: 'error' }>['code'] | 'timeout' | 'stall' | 'worker', string> = {
-  missing: 'Không tìm thấy model AI trên máy chủ. Hãy báo quản trị viên kiểm tra cấu hình.',
+  missing: 'Máy chủ chưa có AI xoá vật thể. Báo người quản lý giúp nhé.',
   network: 'Không tải được model AI. Kiểm tra kết nối mạng rồi thử lại.',
   corrupt: 'Model AI tải về bị hỏng. Hãy thử lại.',
-  memory: 'Máy không đủ bộ nhớ để chạy AI. Hãy đóng bớt ứng dụng hoặc tô vùng nhỏ hơn.',
+  memory: 'Máy không đủ bộ nhớ cho AI. Tắt bớt ứng dụng hoặc tô vùng nhỏ hơn.',
   run: 'AI chưa xử lý được vùng này. Hãy thử lại.',
   timeout: 'AI đã quá thời gian xử lý. Hãy thử một vùng nhỏ hơn.',
   stall: 'Tải model AI bị gián đoạn. Kiểm tra kết nối mạng rồi thử lại.',
   // thường gặp nhất khi tab mở từ trước lần deploy mới: tệp worker cũ đã bị thay
-  worker: 'Không khởi động được AI. Web có thể vừa được cập nhật, hãy tải lại trang rồi thử lại.',
+  worker: 'AI chưa chạy được. Tải lại trang rồi thử lại.',
 }
 
 export type RepairErrorCode = keyof typeof repairMessages
@@ -178,7 +178,7 @@ export function repairWindow(width: number, height: number, strokes: Erase[]) {
   }
   if (!Number.isFinite(left)) throw new Error('Chưa có vùng tô.')
   const span = Math.max(right - left, bottom - top)
-  if (span > long * .8) throw new Error('Vùng tô quá rộng. Hãy chia thành vài vùng nhỏ để xử lý.')
+  if (span > long * .8) throw new Error('Vùng tô quá rộng. Chia ra vài lần nhỏ nhé.')
   const side = Math.ceil(Math.max(span * 2.2, Math.min(SIDE, long)))
   const w = Math.min(side, width)
   const h = Math.min(side, height)

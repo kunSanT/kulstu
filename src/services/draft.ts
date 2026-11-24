@@ -1,8 +1,9 @@
 import { isRecipe, normalizeRecipe, type Recipe } from '../engine/recipe'
 
-type DraftContent = { blob: Blob; name: string; sample: boolean; recipe: Recipe; savedAt: number }
+/** `thumb`: ảnh thu nhỏ (data URL JPEG ~96 px) để nhận ra dự án trong danh sách. */
+type DraftContent = { blob: Blob; name: string; sample: boolean; recipe: Recipe; savedAt: number; thumb?: string }
 export type Draft = DraftContent & { id: string }
-export type DraftSummary = Pick<Draft, 'id' | 'name' | 'sample' | 'savedAt'>
+export type DraftSummary = Pick<Draft, 'id' | 'name' | 'sample' | 'savedAt' | 'thumb'>
 
 // Giữ tên cũ để không mất bản nháp đã lưu trên trình duyệt người dùng.
 const DB = 'kultu'
@@ -11,7 +12,7 @@ const PROJECTS = 'projects'
 const LIST = 'project-list'
 const LATEST = 'latest'
 
-const summary = ({ id, name, sample, savedAt }: Draft): DraftSummary => ({ id, name, sample, savedAt })
+const summary = ({ id, name, sample, savedAt, thumb }: Draft): DraftSummary => ({ id, name, sample, savedAt, thumb })
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

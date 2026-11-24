@@ -1,4 +1,7 @@
-import '@fontsource-variable/archivo/wdth.css'
+import '@fontsource/be-vietnam-pro/400.css'
+import '@fontsource/be-vietnam-pro/500.css'
+import '@fontsource/be-vietnam-pro/600.css'
+import '@fontsource/be-vietnam-pro/700.css'
 import './styles.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -30,7 +33,8 @@ if (import.meta.env.DEV && location.hash.startsWith('#demo')) {
       shape: { ...r.shape, eyes: 40, nose: 40, mouth: 0 },
       spots: [{ x: 0.56, y: 0.52, r: 0.012 }],
     }))
-    const tab = location.hash.slice(6)
+    const [tab, flag] = location.hash.slice(6).split('-')
+    if (flag === 'auto' || flag === 'manual') s.setMode(flag)
     if (tab) s.setTab(tab as never)
     if (location.hash.includes('split')) s.setSplit(true)
   })

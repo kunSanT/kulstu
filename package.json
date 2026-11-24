@@ -20,7 +20,7 @@
     "@capacitor/filesystem": "^8.0.0",
     "@capacitor/haptics": "^8.0.0",
     "@capacitor/share": "^8.0.0",
-    "@fontsource-variable/archivo": "^5.0.0",
+    "@fontsource/be-vietnam-pro": "^5.3.0",
     "@mediapipe/tasks-vision": "^0.10.14",
     "onnxruntime-web": "^1.31.1",
     "react": "^19.3.1",

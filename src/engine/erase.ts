@@ -3,7 +3,8 @@
 // Hợp nhất với vật thể nhỏ trên nền đơn giản (trời, tường, da, cỏ); không dựng lại được hoạ tiết phức tạp.
 
 /** Một nét tô: các điểm x0, y0, x1, y1… chuẩn hoá theo ảnh nguồn; r tính theo cạnh dài. */
-export type Erase = { pts: number[]; r: number }
+/** Một nét cọ. `x`: nét tẩy, xoá bớt vùng đã tô của cùng loại cọ. */
+export type Erase = { pts: number[]; r: number; x?: boolean }
 
 export const MAX_ERASES = 200
 
